@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
   <title>PCMT Playercams</title>
   <link rel="stylesheet" href="/static/app.css" />
 </head>
@@ -15,12 +16,9 @@
     </header>
 
     <section id="startCard" class="card stack">
-      <h2>Open a production</h2>
-      <label>Spectra Group Code
+      <h2 id="startTitle">Open a production</h2>
+      <label id="groupCodeLabel">Spectra Group Code
         <input id="groupCode" autocomplete="off" placeholder="Enter group code" />
-      </label>
-      <label>Producer key <span class="subtle">Only required if configured on the server</span>
-        <input id="producerKey" type="password" autocomplete="current-password" placeholder="Optional" />
       </label>
       <div class="row">
         <button id="openSession" class="btn primary">Open Playercams</button>
@@ -35,6 +33,15 @@
           <div class="grid">
             <div class="col-6"><div class="meta">Session</div><div id="sessionId" class="code"></div></div>
             <div class="col-6"><div class="meta">VDO room</div><div id="roomId" class="code"></div></div>
+          </div>
+          <div>
+            <div class="meta">Producer URL</div>
+            <div id="producerUrl" class="code"></div>
+            <div class="row" style="margin-top:10px">
+              <button id="copyProducer" class="btn">Copy Producer Link</button>
+              <button id="rotateProducer" class="btn ghost">Rotate Producer Link</button>
+            </div>
+            <div class="meta" style="margin-top:8px">The private token is stored in the URL fragment. Anyone with the complete link can control this session; the session ID alone cannot.</div>
           </div>
           <div class="divider"></div>
           <label>Current Spectra Group Code
@@ -52,6 +59,14 @@
           <div id="joinUrl" class="code"></div>
           <button id="copyJoin" class="btn primary">Copy Join Link</button>
           <p class="meta">Send this same random-token link to every player. It does not change when the Spectra group code is rebound.</p>
+        </section>
+
+        <section class="card col-12 stack">
+          <div class="row-between">
+            <div><h2>Playercam Preview</h2><div class="meta">Low-bandwidth, video-only previews of active player pages. Preview audio is never requested.</div></div>
+            <span id="previewQuality" class="meta"></span>
+          </div>
+          <div id="previewGrid" class="preview-grid"></div>
         </section>
 
         <section class="card col-12 stack">

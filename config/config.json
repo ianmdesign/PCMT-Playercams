@@ -1,8 +1,7 @@
 {
   "publicBaseUrl": "http://localhost:5400",
-  "sessionLifetimeHours": 48,
   "groupAliasGraceMinutes": 30,
   "roomPrefix": "pcmtplayercams",
   "roomRandomDigits": 12,
-  "producerAccessKey": ""
+  "producerPreviewBitrateKbps": 800
 }

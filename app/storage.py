@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -17,10 +19,15 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).resolve().parent.paren
 CONFIG_PATH = CONFIG_DIR / "config.json"
 OVERRIDES_PATH = CONFIG_DIR / "name-overrides.json"
 DB_PATH = DATA_DIR / "playercams.sqlite3"
+SESSION_LIFETIME_HOURS = 48
 
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def hash_token(value: str) -> str:
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
 
 
 def normalize_group_code(value: str) -> str:
@@ -50,11 +57,10 @@ def stream_id_for_riot_id(riot_id: str) -> str:
 @dataclass(frozen=True)
 class AppConfig:
     public_base_url: str = "http://localhost:5400"
-    session_lifetime_hours: int = 48
     group_alias_grace_minutes: int = 30
     room_prefix: str = "pcmtplayercams"
     room_random_digits: int = 12
-    producer_access_key: str = ""
+    producer_preview_bitrate_kbps: int = 800
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -64,13 +70,12 @@ class AppConfig:
         raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         return cls(
             public_base_url=str(raw.get("publicBaseUrl", cls.public_base_url)).rstrip("/"),
-            session_lifetime_hours=max(1, int(raw.get("sessionLifetimeHours", cls.session_lifetime_hours))),
             group_alias_grace_minutes=max(
                 0, int(raw.get("groupAliasGraceMinutes", cls.group_alias_grace_minutes))
             ),
             room_prefix=str(raw.get("roomPrefix", cls.room_prefix)),
             room_random_digits=max(6, int(raw.get("roomRandomDigits", cls.room_random_digits))),
-            producer_access_key=str(raw.get("producerAccessKey", cls.producer_access_key)),
+            producer_preview_bitrate_kbps=max(50, int(raw.get("producerPreviewBitrateKbps", cls.producer_preview_bitrate_kbps))),
         )
 
 
@@ -166,6 +171,7 @@ class SessionStore:
                     session_id TEXT PRIMARY KEY,
                     room_id TEXT NOT NULL UNIQUE,
                     join_token TEXT NOT NULL UNIQUE,
+                    producer_token_hash TEXT,
                     current_group_code TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL,
@@ -193,6 +199,15 @@ class SessionStore:
                 );
                 """
             )
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
+            if "producer_token_hash" not in columns:
+                conn.execute("ALTER TABLE sessions ADD COLUMN producer_token_hash TEXT")
+            # Sessions created by pre-capability-link development builds have no
+            # recoverable producer secret. Retire them rather than leave an
+            # unauthenticated or permanently stuck producer session active.
+            conn.execute(
+                "UPDATE sessions SET active = 0 WHERE producer_token_hash IS NULL OR producer_token_hash = ''"
+            )
 
     def _generate_session_id(self) -> str:
         alphabet = string.ascii_uppercase + string.digits
@@ -202,6 +217,9 @@ class SessionStore:
         alphabet = string.digits
         suffix = "".join(secrets.choice(alphabet) for _ in range(self.config.room_random_digits))
         return f"{self.config.room_prefix}{suffix}"
+
+    def _generate_producer_token(self) -> str:
+        return secrets.token_urlsafe(32)
 
     def _row_to_session(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
         if row is None:
@@ -263,19 +281,24 @@ class SessionStore:
             return self._row_to_session(row)
         return None
 
-    def create_or_reuse(self, group_code: str) -> tuple[dict[str, Any], bool]:
+    def create_or_reuse(self, group_code: str) -> tuple[dict[str, Any], bool, str | None]:
         group_code = normalize_group_code(group_code)
         if not group_code:
             raise ValueError("Group code is required")
         existing = self.resolve_group(group_code)
         if existing:
-            return existing, False
+            return existing, False, None
 
         created = now_ms()
-        expires = created + self.config.session_lifetime_hours * 60 * 60 * 1000
+        # Playercam sessions are intentionally fixed at 48 hours from creation.
+        # Reloading the producer page, reconnecting players, or rebinding the
+        # Spectra group code never extends this deadline.
+        expires = created + SESSION_LIFETIME_HOURS * 60 * 60 * 1000
         session_id = self._generate_session_id()
         room_id = self._generate_room_id()
         join_token = secrets.token_urlsafe(32)
+        producer_token = self._generate_producer_token()
+        producer_token_hash = hash_token(producer_token)
 
         with self._connect() as conn:
             stale = conn.execute(
@@ -295,18 +318,45 @@ class SessionStore:
             conn.execute(
                 """
                 INSERT INTO sessions (
-                    session_id, room_id, join_token, current_group_code,
+                    session_id, room_id, join_token, producer_token_hash, current_group_code,
                     created_at, expires_at, active, playercams_enabled
-                ) VALUES (?, ?, ?, ?, ?, ?, 1, 1)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)
                 """,
-                (session_id, room_id, join_token, group_code, created, expires),
+                (session_id, room_id, join_token, producer_token_hash, group_code, created, expires),
             )
             conn.execute(
                 "INSERT INTO group_aliases (group_code, session_id, created_at, resolve_until) VALUES (?, ?, ?, NULL)",
                 (group_code, session_id, created),
             )
 
-        return self.get_session(session_id) or {}, True
+        return self.get_session(session_id) or {}, True, producer_token
+
+    def verify_producer_token(self, session_id: str, token: str | None) -> bool:
+        if not token:
+            return False
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if not self._is_live(row):
+            return False
+        stored_hash = str(row["producer_token_hash"] or "")
+        if not stored_hash:
+            return False
+        return hmac.compare_digest(stored_hash, hash_token(token))
+
+    def rotate_producer_token(self, session_id: str) -> str:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Playercam session is not active")
+        token = self._generate_producer_token()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE sessions SET producer_token_hash = ? WHERE session_id = ?",
+                (hash_token(token), session_id),
+            )
+        return token
 
     def rebind_group(self, session_id: str, new_group_code: str) -> dict[str, Any]:
         new_group_code = normalize_group_code(new_group_code)

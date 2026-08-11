@@ -1,23 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import socketio
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .storage import (
-    AppConfig,
-    OverrideStore,
-    SessionStore,
-    normalize_group_code,
-    stream_id_for_riot_id,
-)
+from .storage import AppConfig, OverrideStore, SessionStore, normalize_group_code
+from .vdo import build_preview_url, build_publish_url
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -28,7 +21,7 @@ sessions = SessionStore(config=config)
 overrides = OverrideStore()
 
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
-app = FastAPI(title="PCMT Playercams", version="0.1.0")
+app = FastAPI(title="PCMT Playercams", version="0.2.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Current Spectra rosters are transient. The frontend republishes them whenever
@@ -64,10 +57,13 @@ class HeartbeatRequest(BaseModel):
     riotId: str = Field(min_length=3, max_length=128)
 
 
-def require_producer_key(x_producer_key: str | None) -> None:
-    expected = config.producer_access_key
-    if expected and x_producer_key != expected:
-        raise HTTPException(status_code=401, detail="Invalid producer key")
+def require_session_token(session_id: str, x_producer_token: str | None) -> dict[str, Any]:
+    session = sessions.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Playercam session not found or expired")
+    if not sessions.verify_producer_token(session_id, x_producer_token):
+        raise HTTPException(status_code=401, detail="Invalid or missing producer link token")
+    return session
 
 
 def get_latest_roster(session: dict[str, Any]) -> dict[str, Any] | None:
@@ -82,11 +78,24 @@ def get_latest_roster(session: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def build_producer_state(session: dict[str, Any]) -> dict[str, Any]:
+    players = sessions.list_players(session["sessionId"])
+    for player in players:
+        preview_url, stream_id = build_preview_url(
+            session["roomId"],
+            player["riotId"],
+            config.producer_preview_bitrate_kbps,
+        )
+        player["streamId"] = stream_id
+        player["previewUrl"] = preview_url
     return {
         **session,
         "joinUrl": f"{config.public_base_url}/join/{session['joinToken']}",
+        # The private producer token is deliberately not included here. The browser
+        # keeps it in the URL fragment and attaches it to authenticated API requests.
+        "producerUrl": f"{config.public_base_url}/producer/{session['sessionId']}",
         "aliases": sessions.list_aliases(session["sessionId"]),
-        "players": sessions.list_players(session["sessionId"]),
+        "players": players,
+        "producerPreviewBitrateKbps": config.producer_preview_bitrate_kbps,
         "nameOverrides": overrides.list_entries(),
         "roster": get_latest_roster(session),
     }
@@ -141,26 +150,15 @@ async def emit_state_to_all_frontends() -> None:
             pass
 
 
-def build_vdo_url(room_id: str, riot_id: str, share_type: str) -> tuple[str, str]:
-    stream_id = stream_id_for_riot_id(riot_id)
-    parts = [
-        f"room={quote(room_id, safe='')}",
-        f"push={quote(stream_id, safe='')}",
-        f"label={quote(riot_id, safe='')}",
-        "roombitrate=0",
-        "disablehotkeys",
-    ]
-    if share_type == "media":
-        parts.append("fileshare")
-    else:
-        # webcam2 shows a clear camera-sharing button before the device prompt,
-        # which works well inside an iframe.
-        parts.append("webcam2")
-    return "https://vdo.ninja/?" + "&".join(parts), stream_id
-
-
 @app.get("/")
 async def producer_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "producer.html")
+
+
+@app.get("/producer/{session_id}")
+async def producer_session_page(session_id: str) -> FileResponse:
+    # The session identifier is not authentication. Serve the producer shell and
+    # let the token-protected API decide whether the URL fragment is valid.
     return FileResponse(STATIC_DIR / "producer.html")
 
 
@@ -178,42 +176,64 @@ async def healthz() -> dict[str, str]:
 
 @app.get("/api/status")
 async def status() -> dict[str, Any]:
-    return {"status": "UP", "version": "0.1.0"}
+    return {"status": "UP", "version": "0.2.0"}
 
 
 @app.post("/api/producer/session")
-async def create_session(
-    payload: SessionRequest,
-    x_producer_key: str | None = Header(default=None),
-) -> JSONResponse:
-    require_producer_key(x_producer_key)
+async def create_session(payload: SessionRequest) -> JSONResponse:
     try:
-        session, created = sessions.create_or_reuse(payload.groupCode)
+        session, created, producer_token = sessions.create_or_reuse(payload.groupCode)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if not created or not producer_token:
+        raise HTTPException(
+            status_code=409,
+            detail="An active playercam session already exists for this group code. Open its private producer link instead.",
+        )
+
     await emit_state_to_all_frontends()
-    return JSONResponse({"created": created, "session": build_producer_state(session)})
+    return JSONResponse(
+        {
+            "created": True,
+            "producerToken": producer_token,
+            "session": build_producer_state(session),
+        }
+    )
 
 
 @app.get("/api/producer/session/{session_id}")
 async def producer_session(
     session_id: str,
-    x_producer_key: str | None = Header(default=None),
+    x_producer_token: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    require_producer_key(x_producer_key)
-    session = sessions.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Playercam session not found or expired")
+    session = require_session_token(session_id, x_producer_token)
     return build_producer_state(session)
+
+
+@app.post("/api/producer/session/{session_id}/producer-token/rotate")
+async def rotate_producer_token(
+    session_id: str,
+    x_producer_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    session = require_session_token(session_id, x_producer_token)
+    try:
+        new_token = sessions.rotate_producer_token(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "producerToken": new_token,
+        "session": build_producer_state(session),
+    }
 
 
 @app.put("/api/producer/session/{session_id}/group-code")
 async def rebind_group_code(
     session_id: str,
     payload: RebindRequest,
-    x_producer_key: str | None = Header(default=None),
+    x_producer_token: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    require_producer_key(x_producer_key)
+    require_session_token(session_id, x_producer_token)
     try:
         session = sessions.rebind_group(session_id, payload.groupCode)
     except ValueError as exc:
@@ -226,9 +246,9 @@ async def rebind_group_code(
 async def set_enabled(
     session_id: str,
     payload: EnabledRequest,
-    x_producer_key: str | None = Header(default=None),
+    x_producer_token: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    require_producer_key(x_producer_key)
+    require_session_token(session_id, x_producer_token)
     try:
         session = sessions.set_playercams_enabled(session_id, payload.enabled)
     except ValueError as exc:
@@ -240,30 +260,30 @@ async def set_enabled(
 @app.post("/api/producer/session/{session_id}/end")
 async def end_session(
     session_id: str,
-    x_producer_key: str | None = Header(default=None),
+    x_producer_token: str | None = Header(default=None),
 ) -> dict[str, bool]:
-    require_producer_key(x_producer_key)
-    if not sessions.get_session(session_id):
-        raise HTTPException(status_code=404, detail="Playercam session not found or expired")
+    require_session_token(session_id, x_producer_token)
     sessions.end_session(session_id)
     await emit_state_to_all_frontends()
     return {"ended": True}
 
 
-@app.get("/api/name-overrides")
+@app.get("/api/producer/session/{session_id}/name-overrides")
 async def get_name_overrides(
-    x_producer_key: str | None = Header(default=None),
+    session_id: str,
+    x_producer_token: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    require_producer_key(x_producer_key)
+    require_session_token(session_id, x_producer_token)
     return {"overrides": overrides.list_entries()}
 
 
-@app.put("/api/name-overrides")
+@app.put("/api/producer/session/{session_id}/name-overrides")
 async def put_name_override(
+    session_id: str,
     payload: OverrideRequest,
-    x_producer_key: str | None = Header(default=None),
+    x_producer_token: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    require_producer_key(x_producer_key)
+    require_session_token(session_id, x_producer_token)
     try:
         entry = overrides.upsert(payload.riotId, payload.displayName)
     except ValueError as exc:
@@ -272,12 +292,13 @@ async def put_name_override(
     return entry
 
 
-@app.delete("/api/name-overrides")
+@app.delete("/api/producer/session/{session_id}/name-overrides")
 async def delete_name_override(
+    session_id: str,
     riotId: str,
-    x_producer_key: str | None = Header(default=None),
+    x_producer_token: str | None = Header(default=None),
 ) -> dict[str, bool]:
-    require_producer_key(x_producer_key)
+    require_session_token(session_id, x_producer_token)
     removed = overrides.remove(riotId)
     if removed:
         await emit_state_to_all_frontends()
@@ -288,7 +309,7 @@ async def delete_name_override(
 async def register_player(token: str, payload: JoinRequest) -> dict[str, Any]:
     try:
         session, player = sessions.register_player(token, payload.riotId, payload.shareType)
-        vdo_url, stream_id = build_vdo_url(session["roomId"], player["riotId"], player["shareType"])
+        vdo_url, stream_id = build_publish_url(session["roomId"], player["riotId"], player["shareType"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await emit_state_to_all_frontends()

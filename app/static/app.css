@@ -61,3 +61,49 @@ input:focus { border-color: #6f91af; box-shadow: 0 0 0 3px rgba(111,145,175,.14)
 .embed-mode { background: #030609; overflow: hidden; }
 .embed-toolbar { height: 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; background: #08111a; border-bottom: 1px solid #213345; font-size: 12px; color: #9bb0c2; }
 .vdo-frame { display: block; width: 100vw; height: calc(100vh - 44px); border: 0; background: #000; }
+
+/* Producer playercam previews */
+.preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+.preview-card {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(0,0,0,.22);
+}
+.preview-frame-wrap {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #050505;
+  overflow: hidden;
+}
+.preview-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #050505;
+  pointer-events: none;
+}
+.preview-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+}
+.preview-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+.preview-mode {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--muted);
+}

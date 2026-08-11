@@ -1,15 +1,59 @@
 const $ = (id) => document.getElementById(id);
 
 let session = null;
-let producerKey = sessionStorage.getItem("pcmtProducerKey") || "";
+let producerToken = getProducerTokenFromHash();
+let requestedSessionId = getSessionIdFromPath();
 let pollTimer = null;
 let lastRosterUpdated = null;
+const previewCards = new Map();
 
-$("producerKey").value = producerKey;
+
+function getSessionIdFromPath() {
+  const match = location.pathname.match(/^\/producer\/([^/]+)\/?$/i);
+  if (!match) return null;
+  try { return decodeURIComponent(match[1]); } catch { return match[1]; }
+}
+
+function getProducerTokenFromHash() {
+  const raw = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
+  if (!raw) return "";
+  const params = new URLSearchParams(raw);
+  return params.get("token") || "";
+}
+
+function producerFragment() {
+  return producerToken ? `#token=${encodeURIComponent(producerToken)}` : "";
+}
+
+function setProducerPath(sessionId) {
+  requestedSessionId = sessionId;
+  const nextPath = `/producer/${encodeURIComponent(sessionId)}${producerFragment()}`;
+  const current = `${location.pathname}${location.hash}`;
+  if (current !== nextPath) history.replaceState({ sessionId }, "", nextPath);
+}
+
+function buildProducerUrl(state = session) {
+  if (!state) return "";
+  const base = state.producerUrl || `${location.origin}/producer/${encodeURIComponent(state.sessionId)}`;
+  return `${base}${producerFragment()}`;
+}
+
+function showDashboard() {
+  $("startCard").classList.add("hidden");
+  $("dashboard").classList.remove("hidden");
+}
+
+function configureResumeCard(sessionId, message = "") {
+  requestedSessionId = sessionId;
+  $("startTitle").textContent = `Open session ${sessionId}`;
+  $("groupCodeLabel").classList.add("hidden");
+  $("openSession").classList.add("hidden");
+  $("startError").textContent = message;
+}
 
 function headers() {
   const result = { "Content-Type": "application/json" };
-  if (producerKey) result["X-Producer-Key"] = producerKey;
+  if (producerToken) result["X-Producer-Token"] = producerToken;
   return result;
 }
 
@@ -22,7 +66,9 @@ async function api(path, options = {}) {
   try { body = await response.json(); } catch { body = null; }
   if (!response.ok) {
     const message = body?.detail || `${response.status} ${response.statusText}`;
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
   return body;
 }
@@ -47,6 +93,79 @@ function formatSeen(ms) {
   if (age < 45000) return "Player page active";
   if (age < 120000) return "Seen about a minute ago";
   return `Last seen ${new Date(ms).toLocaleTimeString()}`;
+}
+
+function playerPageIsActive(player) {
+  return !!player?.lastSeen && (Date.now() - player.lastSeen) < 60000;
+}
+
+function makePreviewCard(player) {
+  const card = document.createElement("div");
+  card.className = "preview-card";
+
+  const frameWrap = document.createElement("div");
+  frameWrap.className = "preview-frame-wrap";
+  const frame = document.createElement("iframe");
+  frame.className = "preview-frame";
+  frame.allow = "autoplay; fullscreen";
+  frame.referrerPolicy = "no-referrer";
+  frame.loading = "eager";
+  frameWrap.appendChild(frame);
+
+  const info = document.createElement("div");
+  info.className = "preview-info";
+  const name = document.createElement("div");
+  name.className = "preview-name";
+  const mode = document.createElement("div");
+  mode.className = "preview-mode";
+  info.append(name, mode);
+  card.append(frameWrap, info);
+
+  return { card, frame, name, mode, url: "" };
+}
+
+function renderPreviews(state) {
+  const root = $("previewGrid");
+  const activePlayers = (state.players || []).filter(playerPageIsActive);
+  const wanted = new Set(activePlayers.map((player) => player.normalizedRiotId));
+
+  for (const [key, refs] of previewCards.entries()) {
+    if (!wanted.has(key)) {
+      refs.frame.src = "about:blank";
+      refs.card.remove();
+      previewCards.delete(key);
+    }
+  }
+
+  const oldEmpty = $("previewEmpty");
+  if (oldEmpty) oldEmpty.remove();
+
+  if (!activePlayers.length) {
+    const empty = document.createElement("div");
+    empty.id = "previewEmpty";
+    empty.className = "empty";
+    empty.textContent = "No active playercam pages yet. Previews appear here after a player enters the VDO.Ninja embed.";
+    root.appendChild(empty);
+  } else {
+    for (const player of activePlayers) {
+      let refs = previewCards.get(player.normalizedRiotId);
+      if (!refs) {
+        refs = makePreviewCard(player);
+        previewCards.set(player.normalizedRiotId, refs);
+      }
+      refs.name.textContent = player.riotId;
+      refs.mode.textContent = player.shareType === "media" ? "Media" : "Camera";
+      if (player.previewUrl && refs.url !== player.previewUrl) {
+        refs.url = player.previewUrl;
+        refs.frame.src = player.previewUrl;
+      }
+      // Re-appending preserves the iframe and connection while keeping server order.
+      root.appendChild(refs.card);
+    }
+  }
+
+  const bitrate = Number(state.producerPreviewBitrateKbps || 0);
+  $("previewQuality").textContent = bitrate ? `${bitrate} kbps per preview · no audio` : "No audio";
 }
 
 function makeOverrideRow(riotId, currentOverride, player) {
@@ -183,24 +302,49 @@ function renderOverrides(state) {
 
 function render(state) {
   session = state;
+  setProducerPath(state.sessionId);
   $("sessionId").textContent = state.sessionId;
   $("roomId").textContent = state.roomId;
+  $("producerUrl").textContent = buildProducerUrl(state);
   $("currentGroup").value = state.groupCode;
   $("joinUrl").textContent = state.joinUrl;
   $("camsEnabled").checked = !!state.playercamsEnabled;
   const otherAliases = (state.aliases || []).filter((value) => value.toLocaleUpperCase() !== state.groupCode.toLocaleUpperCase());
   $("aliases").textContent = otherAliases.length ? `Previous group code aliases: ${otherAliases.join(", ")}` : "";
+  renderPreviews(state);
   renderRoster(state);
   renderOverrides(state);
 }
 
 function showDashboardError(message = "") { $("dashboardError").textContent = message; }
 
+async function loadSessionById(sessionId, { silent = false } = {}) {
+  if (!producerToken) {
+    const message = "This producer URL is missing its private token. Use the full Producer URL that includes #token=...";
+    configureResumeCard(sessionId, message);
+    return false;
+  }
+  try {
+    const state = await api(`/api/producer/session/${encodeURIComponent(sessionId)}`);
+    showDashboard();
+    render(state);
+    startPolling();
+    return true;
+  } catch (error) {
+    configureResumeCard(sessionId, error.message);
+    if (!silent) $("startError").textContent = error.message;
+    return false;
+  }
+}
+
 async function openSession() {
   $("startError").textContent = "";
+  if (requestedSessionId && !session) {
+    await loadSessionById(requestedSessionId);
+    return;
+  }
+
   const groupCode = $("groupCode").value.trim();
-  producerKey = $("producerKey").value;
-  sessionStorage.setItem("pcmtProducerKey", producerKey);
   if (!groupCode) {
     $("startError").textContent = "Enter a Spectra group code.";
     return;
@@ -210,8 +354,9 @@ async function openSession() {
       method: "POST",
       body: JSON.stringify({ groupCode }),
     });
-    $("startCard").classList.add("hidden");
-    $("dashboard").classList.remove("hidden");
+    producerToken = result.producerToken || "";
+    if (!producerToken) throw new Error("Server did not return a producer token for the new session.");
+    showDashboard();
     render(result.session);
     startPolling();
   } catch (error) {
@@ -227,7 +372,7 @@ async function refresh() {
     showDashboardError("");
   } catch (error) {
     showDashboardError(error.message);
-    if (/not found|expired/i.test(error.message)) stopPolling();
+    if (error.status === 401 || /not found|expired/i.test(error.message)) stopPolling();
   }
 }
 
@@ -238,18 +383,49 @@ function startPolling() {
 function stopPolling() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
 
 async function saveOverride(riotId, displayName) {
-  await api("/api/name-overrides", {
+  if (!session) throw new Error("No active producer session.");
+  await api(`/api/producer/session/${encodeURIComponent(session.sessionId)}/name-overrides`, {
     method: "PUT",
     body: JSON.stringify({ riotId, displayName }),
   });
 }
 
 async function removeOverride(riotId) {
-  await api(`/api/name-overrides?riotId=${encodeURIComponent(riotId)}`, { method: "DELETE" });
+  if (!session) throw new Error("No active producer session.");
+  await api(`/api/producer/session/${encodeURIComponent(session.sessionId)}/name-overrides?riotId=${encodeURIComponent(riotId)}`, { method: "DELETE" });
 }
 
 $("openSession").addEventListener("click", openSession);
 $("groupCode").addEventListener("keydown", (event) => { if (event.key === "Enter") openSession(); });
+
+$("copyProducer").addEventListener("click", async () => {
+  if (!session) return;
+  const producerUrl = buildProducerUrl(session);
+  try {
+    await navigator.clipboard.writeText(producerUrl);
+    const original = $("copyProducer").textContent;
+    $("copyProducer").textContent = "Copied";
+    setTimeout(() => $("copyProducer").textContent = original, 1200);
+  } catch {
+    showDashboardError("Could not access the clipboard. Copy the producer link manually.");
+  }
+});
+
+$("rotateProducer").addEventListener("click", async () => {
+  if (!session) return;
+  if (!confirm("Rotate the producer link? The current producer URL will stop working immediately on other machines.")) return;
+  try {
+    const result = await api(`/api/producer/session/${encodeURIComponent(session.sessionId)}/producer-token/rotate`, {
+      method: "POST",
+    });
+    producerToken = result.producerToken || "";
+    if (!producerToken) throw new Error("Server did not return a replacement producer token.");
+    render(result.session);
+    showDashboardError("Producer link rotated. The previous producer URL is now invalid.");
+  } catch (error) {
+    showDashboardError(error.message);
+  }
+});
 
 $("copyJoin").addEventListener("click", async () => {
   if (!session) return;
@@ -309,6 +485,13 @@ $("endSession").addEventListener("click", async () => {
   try {
     await api(`/api/producer/session/${encodeURIComponent(session.sessionId)}/end`, { method: "POST" });
     stopPolling();
+    history.replaceState({}, "", "/");
     location.reload();
   } catch (error) { showDashboardError(error.message); }
 });
+
+
+if (requestedSessionId) {
+  configureResumeCard(requestedSessionId);
+  loadSessionById(requestedSessionId, { silent: true });
+}
