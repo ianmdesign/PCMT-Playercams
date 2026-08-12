@@ -152,6 +152,10 @@ function renderPreviews(state) {
       if (!refs) {
         refs = makePreviewCard(player);
         previewCards.set(player.normalizedRiotId, refs);
+        // Append a preview card only once. Moving/re-appending an iframe during
+        // each producer-state poll can restart its browsing context and WebRTC
+        // connection in some browsers, which looks like a periodic refresh.
+        root.appendChild(refs.card);
       }
       refs.name.textContent = player.riotId;
       refs.mode.textContent = player.shareType === "media" ? "Media" : "Camera";
@@ -159,8 +163,6 @@ function renderPreviews(state) {
         refs.url = player.previewUrl;
         refs.frame.src = player.previewUrl;
       }
-      // Re-appending preserves the iframe and connection while keeping server order.
-      root.appendChild(refs.card);
     }
   }
 
