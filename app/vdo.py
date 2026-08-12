@@ -13,8 +13,8 @@ def build_publish_url(
     room_id: str,
     riot_id: str,
     share_type: str,
-    max_bitrate_kbps: int = 3000,
-    total_bitrate_kbps: int = 4000,
+    max_bitrate_kbps: int = 2500,
+    total_bitrate_kbps: int = 3000,
 ) -> tuple[str, str]:
     """Build the locked-down VDO.Ninja publisher URL used by a player.
 

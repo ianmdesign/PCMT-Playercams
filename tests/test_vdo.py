@@ -26,8 +26,8 @@ class VdoUrlTests(unittest.TestCase):
         self.assertIn("&nosettings", url)
         self.assertIn("&novideobutton", url)
         self.assertIn("&nohangupbutton", url)
-        self.assertIn("maxvideobitrate=3000", url)
-        self.assertIn("limittotalbitrate=4000", url)
+        self.assertIn("maxvideobitrate=2500", url)
+        self.assertIn("limittotalbitrate=3000", url)
 
     def test_publish_bandwidth_limits_are_configurable(self):
         url, _ = build_publish_url(

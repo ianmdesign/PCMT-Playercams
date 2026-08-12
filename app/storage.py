@@ -60,9 +60,9 @@ class AppConfig:
     group_alias_grace_minutes: int = 30
     room_prefix: str = "pcmtplayercams"
     room_random_digits: int = 12
-    producer_preview_bitrate_kbps: int = 800
-    publisher_max_bitrate_kbps: int = 3000
-    publisher_total_bitrate_kbps: int = 4000
+    producer_preview_bitrate_kbps: int = 500
+    publisher_max_bitrate_kbps: int = 2500
+    publisher_total_bitrate_kbps: int = 3000
 
     @classmethod
     def load(cls) -> "AppConfig":
