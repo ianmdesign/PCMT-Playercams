@@ -61,6 +61,8 @@ class AppConfig:
     room_prefix: str = "pcmtplayercams"
     room_random_digits: int = 12
     producer_preview_bitrate_kbps: int = 800
+    publisher_max_bitrate_kbps: int = 3000
+    publisher_total_bitrate_kbps: int = 4000
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -76,6 +78,8 @@ class AppConfig:
             room_prefix=str(raw.get("roomPrefix", cls.room_prefix)),
             room_random_digits=max(6, int(raw.get("roomRandomDigits", cls.room_random_digits))),
             producer_preview_bitrate_kbps=max(50, int(raw.get("producerPreviewBitrateKbps", cls.producer_preview_bitrate_kbps))),
+            publisher_max_bitrate_kbps=max(100, int(raw.get("publisherMaxBitrateKbps", cls.publisher_max_bitrate_kbps))),
+            publisher_total_bitrate_kbps=max(100, int(raw.get("publisherTotalBitrateKbps", cls.publisher_total_bitrate_kbps))),
         )
 
 

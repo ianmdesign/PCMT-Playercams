@@ -9,35 +9,72 @@ def _flag(name: str) -> str:
     return name
 
 
-def build_publish_url(room_id: str, riot_id: str, share_type: str) -> tuple[str, str]:
-    """Build the VDO.Ninja publisher URL used by a player's embedded call.
+def build_publish_url(
+    room_id: str,
+    riot_id: str,
+    share_type: str,
+    max_bitrate_kbps: int = 3000,
+    total_bitrate_kbps: int = 4000,
+) -> tuple[str, str]:
+    """Build the locked-down VDO.Ninja publisher URL used by a player.
 
-    Audio is intentionally disabled at multiple layers:
-    - audiodevice=0 prevents VDO.Ninja from selecting/requesting a microphone.
-    - audiogain=0 keeps any microphone track muted if one is later introduced.
-    - noaudio/deafen prevent incoming room audio from being played to the player.
-    - the embedding iframe itself does not grant microphone permission.
+    The player link is deliberately publish-only from the user's perspective:
+    - no microphone or incoming room audio
+    - no incoming room video
+    - no participant list, chat, settings, header, or normal VDO controls
+    - room-to-room video delivery is disabled, while direct view/scene links still work
+    - publisher bandwidth is capped per outbound stream and in aggregate
     """
     stream_id = stream_id_for_riot_id(riot_id)
+    max_bitrate_kbps = max(100, int(max_bitrate_kbps))
+    total_bitrate_kbps = max(100, int(total_bitrate_kbps))
+
     parts = [
         f"room={quote(room_id, safe='')}",
         f"push={quote(stream_id, safe='')}",
         f"label={quote(riot_id, safe='')}",
+
+        # Do not send a player's feed to other ordinary room guests. This does
+        # not prevent producer/overlay direct view links from receiving it.
         "roombitrate=0",
+
+        # Hard publisher-side bandwidth limits. maxvideobitrate applies per
+        # outbound stream; limittotalbitrate caps aggregate outbound video.
+        f"maxvideobitrate={max_bitrate_kbps}",
+        f"limittotalbitrate={total_bitrate_kbps}",
+
+        # No audio capture or playback.
         "audiodevice=0",
         "audiogain=0",
         _flag("noaudio"),
         _flag("deafen"),
+
+        # Do not form incoming room video connections.
+        _flag("novideo"),
+
+        # Lock down the VDO.Ninja room UI.
+        "showlist=0",
+        "chatbutton=0",
+        _flag("cleanoutput"),
+        _flag("noheader"),
+        _flag("hidehome"),
+        _flag("nosettings"),
         _flag("nomicbutton"),
         _flag("nospeakerbutton"),
+        _flag("novideobutton"),
+        _flag("nohangupbutton"),
         _flag("disablehotkeys"),
     ]
+
     if share_type == "media":
+        # Keep fileshare available because this is the setup mode selected by
+        # the outer PCMT page. The normal room file-share controls remain hidden
+        # by cleanoutput and the other UI restrictions above.
         parts.append("fileshare")
     else:
-        # webcam2 shows a clear camera-sharing button before the device prompt,
-        # which works well inside an iframe.
+        # webcam2 preserves the intentional camera-selection flow before publish.
         parts.append("webcam2")
+
     return "https://vdo.ninja/?" + "&".join(parts), stream_id
 
 

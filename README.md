@@ -13,6 +13,8 @@ The upstream Spectra Server stays unchanged. The PCMT frontend continues to rece
 - One separate random player join token is generated for the session.
 - VDO room IDs use `pcmtplayercams` followed immediately by 12 randomized digits by default.
 - Player camera calls are video-only: the embed does not grant microphone permission, VDO.Ninja is given `audiodevice=0`, and incoming room audio is disabled.
+- Player VDO.Ninja sessions are locked down: incoming room video is disabled, other players are not shown, the participant list/chat/header/settings/control buttons are hidden, and room-to-room video is disabled.
+- Publisher bandwidth is capped independently from preview quality. By default, a player can send at most 3000 kbps to any one direct viewer and 4000 kbps total across all outbound video connections.
 - The producer dashboard shows low-bandwidth, no-audio previews for active playercam pages without changing the full-quality feed requested by the broadcast overlay.
 - All players use the same join URL, enter their full `Riot Name#Tagline`, then choose:
   - **Share Video** -> VDO.Ninja camera flow (`webcam2`)
@@ -61,11 +63,13 @@ The service listens on port `5400` by default.
   "groupAliasGraceMinutes": 30,
   "roomPrefix": "pcmtplayercams",
   "roomRandomDigits": 12,
-  "producerPreviewBitrateKbps": 800
+  "producerPreviewBitrateKbps": 800,
+  "publisherMaxBitrateKbps": 3000,
+  "publisherTotalBitrateKbps": 4000
 }
 ```
 
-`publicBaseUrl` defaults to `http://localhost:5400`. Like PCMT Mapban, change it directly in `config/config.json` when deploying behind a public hostname; for example, set it to the HTTPS URL used by players. There is no server-wide producer access key. Creating a new session only requires its Spectra group code; once created, producer access is granted exclusively by the per-session private Producer URL. The token lives after `#token=` so it is not sent as part of the HTTP request URL; the producer page reads it locally and supplies it in authenticated API requests. Treat the complete Producer URL as a secret. `producerPreviewBitrateKbps` controls only the producer dashboard preview request and defaults to 800 kbps per active playercam; it does not cap the broadcast overlay feed. The player-facing link has its own separate random join token and never exposes the Spectra group code as authentication.
+`publicBaseUrl` defaults to `http://localhost:5400`. Like PCMT Mapban, change it directly in `config/config.json` when deploying behind a public hostname; for example, set it to the HTTPS URL used by players. There is no server-wide producer access key. Creating a new session only requires its Spectra group code; once created, producer access is granted exclusively by the per-session private Producer URL. The token lives after `#token=` so it is not sent as part of the HTTP request URL; the producer page reads it locally and supplies it in authenticated API requests. Treat the complete Producer URL as a secret. `producerPreviewBitrateKbps` controls only the producer dashboard preview request and defaults to 800 kbps per active playercam; it does not cap the broadcast overlay feed. `publisherMaxBitrateKbps` is the per-viewer sender-side ceiling, while `publisherTotalBitrateKbps` caps aggregate outbound player video across the broadcast overlay, producer preview, and any other direct viewers. The defaults of 3000/4000 kbps leave room for the normal 2500 kbps broadcast view plus the 800 kbps producer preview without allowing unlimited upload use. The player-facing link has its own separate random join token and never exposes the Spectra group code as authentication.
 
 If using Nginx Proxy Manager, proxy the public HTTPS hostname to this service on port `5400` and enable WebSocket support for Socket.IO.
 

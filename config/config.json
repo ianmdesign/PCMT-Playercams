@@ -3,5 +3,7 @@
   "groupAliasGraceMinutes": 30,
   "roomPrefix": "pcmtplayercams",
   "roomRandomDigits": 12,
-  "producerPreviewBitrateKbps": 800
+  "producerPreviewBitrateKbps": 800,
+  "publisherMaxBitrateKbps": 3000,
+  "publisherTotalBitrateKbps": 4000
 }

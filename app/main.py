@@ -309,7 +309,13 @@ async def delete_name_override(
 async def register_player(token: str, payload: JoinRequest) -> dict[str, Any]:
     try:
         session, player = sessions.register_player(token, payload.riotId, payload.shareType)
-        vdo_url, stream_id = build_publish_url(session["roomId"], player["riotId"], player["shareType"])
+        vdo_url, stream_id = build_publish_url(
+            session["roomId"],
+            player["riotId"],
+            player["shareType"],
+            config.publisher_max_bitrate_kbps,
+            config.publisher_total_bitrate_kbps,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await emit_state_to_all_frontends()

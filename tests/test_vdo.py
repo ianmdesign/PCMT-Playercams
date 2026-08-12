@@ -16,6 +16,25 @@ class VdoUrlTests(unittest.TestCase):
         self.assertIn("&nomicbutton", url)
         self.assertIn("&nospeakerbutton", url)
         self.assertIn("&webcam2", url)
+        self.assertIn("roombitrate=0", url)
+        self.assertIn("&novideo", url)
+        self.assertIn("showlist=0", url)
+        self.assertIn("chatbutton=0", url)
+        self.assertIn("&cleanoutput", url)
+        self.assertIn("&noheader", url)
+        self.assertIn("&hidehome", url)
+        self.assertIn("&nosettings", url)
+        self.assertIn("&novideobutton", url)
+        self.assertIn("&nohangupbutton", url)
+        self.assertIn("maxvideobitrate=3000", url)
+        self.assertIn("limittotalbitrate=4000", url)
+
+    def test_publish_bandwidth_limits_are_configurable(self):
+        url, _ = build_publish_url(
+            "pcmtplayercams123456789012", "Player#TAG", "video", 2800, 3600
+        )
+        self.assertIn("maxvideobitrate=2800", url)
+        self.assertIn("limittotalbitrate=3600", url)
 
     def test_media_publish_url_keeps_audio_disabled(self):
         url, _ = build_publish_url("pcmtplayercams123456789012", "Player#TAG", "media")
