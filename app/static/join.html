@@ -7,21 +7,25 @@
   <link rel="stylesheet" href="/static/app.css" />
 </head>
 <body>
+  <div class="spectra-brand" aria-label="PCMT Playercams">
+    <strong>PCMT</strong>
+    <small>playercams</small>
+  </div>
+
   <main id="joinSetup" class="join-shell">
-    <section class="card join-card stack">
-      <div class="eyebrow">PCMT Playercams</div>
-      <h1 style="font-size:36px">Join Playercam</h1>
-      <p>Enter the full Riot ID you are using in this match, including the # and tagline.</p>
-      <label>Riot ID
+    <section class="join-card">
+      <h1>Enter or confirm your Valorant name</h1>
+      <label>
         <input id="riotId" autocomplete="off" placeholder="Player Name#NA1" />
       </label>
+      <p class="join-hint">Enter both your name and tag (e.g. Spectra#Overlay).<br />Make sure it is exactly the same as in-game.</p>
       <div class="choice-grid">
         <button id="shareVideo" class="choice">
-          <strong>Share Video</strong>
+          <strong>✓ Share Video</strong>
           <span>Open VDO.Ninja's camera join flow.</span>
         </button>
-        <button id="shareMedia" class="choice">
-          <strong>Share Image / File</strong>
+        <button id="shareMedia" class="choice media">
+          <strong>✓ Share Image/File</strong>
           <span>Open VDO.Ninja's media-file sharing flow.</span>
         </button>
       </div>
@@ -30,12 +34,15 @@
   </main>
 
   <main id="embedMode" class="hidden embed-mode">
-    <div class="embed-toolbar">
-      <span id="embedIdentity"></span>
-      <button id="backButton" class="btn ghost" style="padding:5px 9px">Back</button>
+    <div class="embed-stage">
+      <div class="embed-toolbar">
+        <span id="embedIdentity"></span>
+        <button id="backButton" class="btn ghost">Back</button>
+      </div>
+      <iframe id="vdoFrame" class="vdo-frame" allow="camera *; autoplay *; fullscreen *"></iframe>
     </div>
-    <iframe id="vdoFrame" class="vdo-frame" allow="camera *; autoplay *; fullscreen *"></iframe>
   </main>
+
   <script src="/static/join.js"></script>
 </body>
 </html>

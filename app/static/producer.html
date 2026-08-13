@@ -8,32 +8,64 @@
   <link rel="stylesheet" href="/static/app.css" />
 </head>
 <body>
-  <main class="shell">
-    <header class="hero">
-      <div class="eyebrow">PCMT Broadcast Tools</div>
-      <h1>Playercams</h1>
-      <p>Bind a camera room to the same group code used by Spectra. Player links and VDO rooms survive group-code changes.</p>
-    </header>
+  <div class="spectra-brand" aria-label="PCMT Playercams">
+    <strong>PCMT</strong>
+    <small>playercams</small>
+  </div>
 
-    <section id="startCard" class="card stack">
-      <h2 id="startTitle">Open a production</h2>
-      <label id="groupCodeLabel">Spectra Group Code
-        <input id="groupCode" autocomplete="off" placeholder="Enter group code" />
-      </label>
-      <div class="row">
-        <button id="openSession" class="btn primary">Open Playercams</button>
-        <span id="startError" class="error"></span>
+  <main class="shell">
+    <section id="startCard" class="start-panel">
+      <div class="start-wrap">
+        <div class="launch-wordmark" aria-hidden="true">
+          <strong>PCMT</strong>
+          <span>playercams</span>
+        </div>
+
+        <div class="start-card stack">
+          <h1 id="startTitle">Welcome to PCMT Playercams</h1>
+          <p>Enter the Spectra group code to open or create the production playercam session.</p>
+          <label id="groupCodeLabel">Spectra Group Code
+            <input id="groupCode" autocomplete="off" placeholder="Enter group code" />
+          </label>
+          <button id="openSession" class="btn primary">Open Playercams</button>
+          <span id="startError" class="error"></span>
+        </div>
       </div>
     </section>
 
-    <section id="dashboard" class="hidden stack">
-      <div class="grid">
-        <section class="card col-7 stack">
-          <div class="row-between"><h2>Production</h2><span id="sessionStatus" class="status"><span class="dot live"></span> Active</span></div>
-          <div class="grid">
-            <div class="col-6"><div class="meta">Session</div><div id="sessionId" class="code"></div></div>
-            <div class="col-6"><div class="meta">VDO room</div><div id="roomId" class="code"></div></div>
+    <section id="dashboard" class="hidden dashboard">
+      <div class="copy-player-action">
+        <button id="copyJoin" class="btn">⧉ Copy URL for Players</button>
+      </div>
+
+      <header class="feed-heading">
+        <h1><span id="feedCount">0</span> Feeds Connected</h1>
+        <p>Video quality is intentionally kept lower here to reduce bandwidth and render load. Overlay quality is not limited this much.</p>
+        <span id="previewQuality" class="meta"></span>
+      </header>
+
+      <section class="feed-stage">
+        <div id="previewGrid" class="preview-grid"></div>
+      </section>
+
+      <div class="grid control-deck">
+        <section class="card col-12 stack">
+          <div class="control-title">
+            <h2>Production</h2>
+            <span id="sessionStatus" class="status"><span class="dot live"></span> Active</span>
           </div>
+
+          <div class="grid">
+            <div class="col-6">
+              <div class="meta">Session</div>
+              <div id="sessionId" class="code"></div>
+            </div>
+            <div class="col-6">
+              <div class="meta">VDO room</div>
+              <div id="roomId" class="code"></div>
+            </div>
+          </div>
+
           <div>
             <div class="meta">Producer URL</div>
             <div id="producerUrl" class="code"></div>
@@ -43,65 +75,69 @@
             </div>
             <div class="meta" style="margin-top:8px">The private token is stored in the URL fragment. Anyone with the complete link can control this session; the session ID alone cannot.</div>
           </div>
+
           <div class="divider"></div>
+
           <label>Current Spectra Group Code
             <div class="row">
               <input id="currentGroup" autocomplete="off" />
               <button id="rebindGroup" class="btn">Change Group Code</button>
             </div>
           </label>
+
           <div id="aliases" class="meta"></div>
           <label class="toggle"><input id="camsEnabled" type="checkbox" /> Show playercams in overlay</label>
         </section>
 
-        <section class="card col-5 stack">
-          <h2>Player Join Link</h2>
-          <div id="joinUrl" class="code"></div>
-          <button id="copyJoin" class="btn primary">Copy Join Link</button>
-          <p class="meta">Send this same random-token link to every player. It does not change when the Spectra group code is rebound.</p>
-        </section>
-
-        <section class="card col-12 stack">
-          <div class="row-between">
-            <div><h2>Playercam Preview</h2><div class="meta">Low-bandwidth, video-only previews of active player pages. Preview audio is never requested.</div></div>
-            <span id="previewQuality" class="meta"></span>
-          </div>
-          <div id="previewGrid" class="preview-grid"></div>
-        </section>
-
-        <section class="card col-12 stack">
-          <div class="row-between">
-            <div><h2>Current Match</h2><div class="meta">Roster is reported by the PCMT frontend when Spectra match data is available.</div></div>
-            <span id="rosterUpdated" class="meta"></span>
-          </div>
-          <div id="roster"></div>
-        </section>
-
-        <section class="card col-12 stack">
-          <div class="row-between">
-            <div><h2>Persistent Name Overrides</h2><div class="meta">Saved globally by full Riot ID and reused automatically in future matches.</div></div>
-          </div>
-          <div class="grid">
-            <label class="col-5">Riot ID
-              <input id="manualRiotId" placeholder="Player Name#NA1" />
-            </label>
-            <label class="col-5">Broadcast Name
-              <input id="manualDisplayName" placeholder="PlayerName" />
-            </label>
-            <div class="col-2 row" style="align-items:end"><button id="manualSave" class="btn primary" style="width:100%">Save</button></div>
-          </div>
-          <div id="overrideError" class="error"></div>
-          <div id="savedOverrides" class="player-list"></div>
-        </section>
-
-        <section class="card col-12 row-between">
-          <div><strong>End this playercam session</strong><div class="meta">Retires the room and join token. This is separate from changing the group code.</div></div>
-          <button id="endSession" class="btn danger">End Session</button>
-        </section>
       </div>
+
+      <section class="card match-card stack">
+        <div class="row-between">
+          <div>
+            <h2>Current Match</h2>
+            <div class="meta">Roster is reported by the PCMT Spectra frontend. Enter broadcast-name overrides beside each player and save them individually.</div>
+          </div>
+          <span id="rosterUpdated" class="meta"></span>
+        </div>
+        <div id="roster"></div>
+      </section>
+
+      <section class="card manual-override-card stack">
+        <div class="row-between">
+          <div>
+            <h2>Persistent Name Overrides</h2>
+            <div class="meta">Saved globally by full Riot ID and reused automatically in future matches.</div>
+          </div>
+        </div>
+
+        <div class="grid">
+          <label class="col-5">Riot ID
+            <input id="manualRiotId" placeholder="Player Name#NA1" />
+          </label>
+          <label class="col-5">Broadcast Name
+            <input id="manualDisplayName" placeholder="PlayerName" />
+          </label>
+          <div class="col-2 row" style="align-items:end">
+            <button id="manualSave" class="btn primary" style="width:100%">Save</button>
+          </div>
+        </div>
+
+        <div id="overrideError" class="error"></div>
+        <div id="savedOverrides" class="player-list"></div>
+      </section>
+
+      <section class="card end-card row-between">
+        <div>
+          <strong>End this playercam session</strong>
+          <div class="meta">Retires the room and join token. This is separate from changing the group code.</div>
+        </div>
+        <button id="endSession" class="btn danger">End Session</button>
+      </section>
+
       <div id="dashboardError" class="error"></div>
     </section>
   </main>
+
   <script src="/static/producer.js"></script>
 </body>
 </html>

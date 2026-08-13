@@ -131,6 +131,9 @@ function renderPreviews(state) {
   const activePlayers = (state.players || []).filter(playerPageIsActive);
   const wanted = new Set(activePlayers.map((player) => player.normalizedRiotId));
 
+  const oldEmpty = $("previewEmpty");
+  if (oldEmpty) oldEmpty.remove();
+
   for (const [key, refs] of previewCards.entries()) {
     if (!wanted.has(key)) {
       refs.frame.src = "about:blank";
@@ -139,14 +142,11 @@ function renderPreviews(state) {
     }
   }
 
-  const oldEmpty = $("previewEmpty");
-  if (oldEmpty) oldEmpty.remove();
-
   if (!activePlayers.length) {
     const empty = document.createElement("div");
     empty.id = "previewEmpty";
-    empty.className = "empty";
-    empty.textContent = "No active playercam pages yet. Previews appear here after a player enters the VDO.Ninja embed.";
+    empty.className = "preview-empty";
+    empty.textContent = "Waiting for playercam feeds...";
     root.appendChild(empty);
   } else {
     for (const player of activePlayers) {
@@ -154,19 +154,22 @@ function renderPreviews(state) {
       if (!refs) {
         refs = makePreviewCard(player);
         previewCards.set(player.normalizedRiotId, refs);
-        // Append a preview card only once. Moving/re-appending an iframe during
-        // each producer-state poll can restart its browsing context and WebRTC
-        // connection in some browsers, which looks like a periodic refresh.
+        // Keep each iframe mounted once so polling does not restart its
+        // browsing context or WebRTC connection.
         root.appendChild(refs.card);
       }
+
       refs.name.textContent = player.riotId;
       refs.mode.textContent = player.shareType === "media" ? "Media" : "Camera";
+
       if (player.previewUrl && refs.url !== player.previewUrl) {
         refs.url = player.previewUrl;
         refs.frame.src = player.previewUrl;
       }
     }
   }
+
+  $("feedCount").textContent = String(activePlayers.length);
 
   const bitrate = Number(state.producerPreviewBitrateKbps || 0);
   $("previewQuality").textContent = bitrate ? `${bitrate} kbps per preview · no audio` : "No audio";
@@ -329,7 +332,6 @@ function render(state) {
   if (!groupCodeDraftDirty && document.activeElement !== currentGroupInput) {
     currentGroupInput.value = state.groupCode;
   }
-  $("joinUrl").textContent = state.joinUrl;
   $("camsEnabled").checked = !!state.playercamsEnabled;
   const otherAliases = (state.aliases || []).filter((value) => value.toLocaleUpperCase() !== state.groupCode.toLocaleUpperCase());
   $("aliases").textContent = otherAliases.length ? `Previous group code aliases: ${otherAliases.join(", ")}` : "";
