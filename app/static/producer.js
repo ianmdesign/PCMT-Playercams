@@ -6,6 +6,8 @@ let requestedSessionId = getSessionIdFromPath();
 let pollTimer = null;
 let lastRosterUpdated = null;
 const previewCards = new Map();
+let groupCodeDraftDirty = false;
+const overrideDrafts = new Map();
 
 
 function getSessionIdFromPath() {
@@ -189,8 +191,15 @@ function makeOverrideRow(riotId, currentOverride, player) {
   identity.appendChild(status);
 
   const input = document.createElement("input");
-  input.value = currentOverride?.displayName || "";
+  const draftKey = norm(riotId);
+  const draftValue = overrideDrafts.get(draftKey);
+  input.value = draftValue !== undefined
+    ? draftValue
+    : (currentOverride?.displayName || "");
   input.placeholder = "Use Spectra name";
+  input.addEventListener("input", () => {
+    overrideDrafts.set(draftKey, input.value);
+  });
 
   const actions = document.createElement("div");
   actions.className = "row";
@@ -205,6 +214,7 @@ function makeOverrideRow(riotId, currentOverride, player) {
       } else {
         await saveOverride(riotId, displayName);
       }
+      overrideDrafts.delete(draftKey);
       await refresh();
     } catch (error) { showDashboardError(error.message); }
   });
@@ -215,6 +225,7 @@ function makeOverrideRow(riotId, currentOverride, player) {
   remove.addEventListener("click", async () => {
     try {
       await removeOverride(riotId);
+      overrideDrafts.delete(draftKey);
       await refresh();
     } catch (error) { showDashboardError(error.message); }
   });
@@ -302,20 +313,31 @@ function renderOverrides(state) {
   }
 }
 
+function isOverrideInputFocused() {
+  const active = document.activeElement;
+  if (!active || active.tagName !== "INPUT") return false;
+  return $("roster").contains(active) || $("savedOverrides").contains(active);
+}
+
 function render(state) {
   session = state;
   setProducerPath(state.sessionId);
   $("sessionId").textContent = state.sessionId;
   $("roomId").textContent = state.roomId;
   $("producerUrl").textContent = buildProducerUrl(state);
-  $("currentGroup").value = state.groupCode;
+  const currentGroupInput = $("currentGroup");
+  if (!groupCodeDraftDirty && document.activeElement !== currentGroupInput) {
+    currentGroupInput.value = state.groupCode;
+  }
   $("joinUrl").textContent = state.joinUrl;
   $("camsEnabled").checked = !!state.playercamsEnabled;
   const otherAliases = (state.aliases || []).filter((value) => value.toLocaleUpperCase() !== state.groupCode.toLocaleUpperCase());
   $("aliases").textContent = otherAliases.length ? `Previous group code aliases: ${otherAliases.join(", ")}` : "";
   renderPreviews(state);
-  renderRoster(state);
-  renderOverrides(state);
+  if (!isOverrideInputFocused()) {
+    renderRoster(state);
+    renderOverrides(state);
+  }
 }
 
 function showDashboardError(message = "") { $("dashboardError").textContent = message; }
@@ -399,6 +421,9 @@ async function removeOverride(riotId) {
 
 $("openSession").addEventListener("click", openSession);
 $("groupCode").addEventListener("keydown", (event) => { if (event.key === "Enter") openSession(); });
+$("currentGroup").addEventListener("input", () => {
+  groupCodeDraftDirty = true;
+});
 
 $("copyProducer").addEventListener("click", async () => {
   if (!session) return;
@@ -450,6 +475,7 @@ $("rebindGroup").addEventListener("click", async () => {
       method: "PUT",
       body: JSON.stringify({ groupCode }),
     });
+    groupCodeDraftDirty = false;
     render(state);
     showDashboardError("");
   } catch (error) { showDashboardError(error.message); }
