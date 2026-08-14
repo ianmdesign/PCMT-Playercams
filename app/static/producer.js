@@ -159,7 +159,10 @@ function renderPreviews(state) {
         root.appendChild(refs.card);
       }
 
-      refs.name.textContent = player.riotId;
+      const playerOverride = overrideMap(state.nameOverrides).get(player.normalizedRiotId);
+      refs.name.textContent = playerOverride?.displayName
+        ? `${playerOverride.displayName} · ${player.riotId}`
+        : player.riotId;
       refs.mode.textContent = player.shareType === "media" ? "Media" : "Camera";
 
       if (player.previewUrl && refs.url !== player.previewUrl) {
@@ -304,6 +307,7 @@ function renderOverrides(state) {
   }
   const players = connectedPlayerMap(state.players);
   const extras = (state.nameOverrides || []).filter((entry) => !rosterIds.has(entry.normalizedRiotId));
+  $("savedOverrideCount").textContent = String(extras.length);
   if (!extras.length) {
     const empty = document.createElement("div");
     empty.className = "empty";

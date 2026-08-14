@@ -729,17 +729,23 @@ body.embed-mode {
 .embed-toolbar {
   position: absolute;
   z-index: 4;
-  top: -42px;
-  right: 0;
+  top: 12px;
+  left: 12px;
+  right: 12px;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
   color: rgba(255,255,255,.72);
   font-size: 11px;
+  pointer-events: none;
 }
 
 .embed-toolbar .btn {
   padding: 6px 10px;
+  background: rgba(17,18,20,.72);
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
 }
 
 .vdo-frame {
@@ -796,5 +802,101 @@ body.embed-mode {
   }
   .spectra-brand small {
     font-size: 10px;
+  }
+}
+
+
+/* Saved override list: collapsed by default while entry fields remain visible. */
+.override-details {
+  margin-top: 2px;
+  border-top: 1px solid rgba(255,255,255,.12);
+  padding-top: 10px;
+}
+
+.override-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 5px;
+  color: rgba(255,255,255,.86);
+  background: rgba(17,18,20,.52);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.override-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.override-details summary::after {
+  content: "▾";
+  color: rgba(255,255,255,.58);
+  font-size: 12px;
+  transition: transform .12s ease;
+}
+
+.override-details[open] summary::after {
+  transform: rotate(180deg);
+}
+
+.override-count {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.09);
+  color: rgba(255,255,255,.68);
+  text-align: center;
+  font-size: 10px;
+}
+
+.override-list {
+  margin-top: 10px;
+}
+
+/* Player-facing identity strip above the VDO.Ninja frame. */
+.embed-player-identity {
+  min-width: 0;
+  max-width: calc(100% - 76px);
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 6px 9px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 5px;
+  background: rgba(17,18,20,.72);
+  color: #fff;
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+}
+
+.embed-player-identity strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.embed-player-identity span {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(255,255,255,.64);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+@media (max-width: 620px) {
+  .embed-player-identity {
+    display: grid;
+    gap: 1px;
   }
 }

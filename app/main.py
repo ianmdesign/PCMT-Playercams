@@ -77,6 +77,17 @@ def get_latest_roster(session: dict[str, Any]) -> dict[str, Any] | None:
     return max(candidates, key=lambda item: int(item.get("updatedAt", 0)))
 
 
+def get_override_display_name(riot_id: str) -> str | None:
+    normalized = (riot_id or "").strip().casefold()
+    if not normalized:
+        return None
+    for entry in overrides.list_entries():
+        if str(entry.get("normalizedRiotId", "")).casefold() == normalized:
+            display_name = str(entry.get("displayName", "")).strip()
+            return display_name or None
+    return None
+
+
 def build_producer_state(session: dict[str, Any]) -> dict[str, Any]:
     players = sessions.list_players(session["sessionId"])
     for player in players:
@@ -323,6 +334,7 @@ async def register_player(token: str, payload: JoinRequest) -> dict[str, Any]:
         "sessionId": session["sessionId"],
         "roomId": session["roomId"],
         "riotId": player["riotId"],
+        "displayName": get_override_display_name(player["riotId"]),
         "shareType": player["shareType"],
         "streamId": stream_id,
         "vdoUrl": vdo_url,
@@ -330,12 +342,16 @@ async def register_player(token: str, payload: JoinRequest) -> dict[str, Any]:
 
 
 @app.post("/api/join/{token}/heartbeat")
-async def player_heartbeat(token: str, payload: HeartbeatRequest) -> dict[str, bool]:
+async def player_heartbeat(token: str, payload: HeartbeatRequest) -> dict[str, Any]:
     try:
         sessions.heartbeat_player(token, payload.riotId)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True}
+    return {
+        "ok": True,
+        "riotId": payload.riotId,
+        "displayName": get_override_display_name(payload.riotId),
+    }
 
 
 @sio.event

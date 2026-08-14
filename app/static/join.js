@@ -1,7 +1,24 @@
 const $ = (id) => document.getElementById(id);
 const token = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
 let activeRiotId = "";
+let activeShareType = "";
 let heartbeatTimer = null;
+
+function renderEmbedIdentity(riotId, displayName, shareType) {
+  const root = $("embedIdentity");
+  root.replaceChildren();
+
+  const primary = document.createElement("strong");
+  primary.textContent = displayName || riotId;
+
+  const secondary = document.createElement("span");
+  const details = [];
+  if (displayName) details.push(riotId);
+  details.push(shareType === "media" ? "Media" : "Camera");
+  secondary.textContent = details.join(" · ");
+
+  root.append(primary, secondary);
+}
 
 async function register(shareType) {
   $("joinError").textContent = "";
@@ -18,8 +35,11 @@ async function register(shareType) {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data?.detail || "Could not join the playercam session.");
+
     activeRiotId = data.riotId;
-    $("embedIdentity").textContent = `${data.riotId} · ${shareType === "media" ? "Media" : "Camera"}`;
+    activeShareType = shareType;
+    renderEmbedIdentity(data.riotId, data.displayName || "", shareType);
+
     $("vdoFrame").src = data.vdoUrl;
     $("joinSetup").classList.add("hidden");
     $("embedMode").classList.remove("hidden");
@@ -33,12 +53,19 @@ async function register(shareType) {
 async function heartbeat() {
   if (!activeRiotId) return;
   try {
-    await fetch(`/api/join/${encodeURIComponent(token)}/heartbeat`, {
+    const response = await fetch(`/api/join/${encodeURIComponent(token)}/heartbeat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ riotId: activeRiotId }),
       keepalive: true,
     });
+    if (!response.ok) return;
+    const data = await response.json();
+    renderEmbedIdentity(
+      data.riotId || activeRiotId,
+      data.displayName || "",
+      activeShareType,
+    );
   } catch { /* status is best effort */ }
 }
 
@@ -55,7 +82,9 @@ $("backButton").addEventListener("click", () => {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = null;
   activeRiotId = "";
+  activeShareType = "";
   $("vdoFrame").src = "about:blank";
+  $("embedIdentity").replaceChildren();
   $("embedMode").classList.add("hidden");
   $("joinSetup").classList.remove("hidden");
   document.body.classList.remove("embed-mode");
