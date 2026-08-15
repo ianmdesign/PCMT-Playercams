@@ -101,6 +101,40 @@ function playerPageIsActive(player) {
   return !!player?.lastSeen && (Date.now() - player.lastSeen) < 60000;
 }
 
+function previewKey(player) {
+  return player.connectionNormalizedRiotId || player.normalizedRiotId;
+}
+
+async function correctPlayerRiotId(player) {
+  if (!session) return;
+
+  const corrected = window.prompt(
+    "Correct Riot ID for this player in the current session:",
+    player.riotId,
+  );
+  if (corrected === null) return;
+
+  const riotId = corrected.trim();
+  if (!riotId.includes("#") || riotId.startsWith("#") || riotId.endsWith("#")) {
+    showDashboardError("Enter the full Riot ID including # and tagline.");
+    return;
+  }
+
+  try {
+    await api(`/api/producer/session/${encodeURIComponent(session.sessionId)}/players/riot-id`, {
+      method: "PUT",
+      body: JSON.stringify({
+        connectionRiotId: player.connectionRiotId || player.riotId,
+        riotId,
+      }),
+    });
+    await refresh();
+    showDashboardError("");
+  } catch (error) {
+    showDashboardError(error.message);
+  }
+}
+
 function makePreviewCard(player) {
   const card = document.createElement("div");
   card.className = "preview-card";
@@ -118,18 +152,29 @@ function makePreviewCard(player) {
   info.className = "preview-info";
   const name = document.createElement("div");
   name.className = "preview-name";
+  const controls = document.createElement("div");
+  controls.className = "preview-controls";
+
   const mode = document.createElement("div");
   mode.className = "preview-mode";
-  info.append(name, mode);
+
+  const fixRiotId = document.createElement("button");
+  fixRiotId.type = "button";
+  fixRiotId.className = "preview-fix-riot-id";
+  fixRiotId.textContent = "Fix Riot ID";
+  fixRiotId.title = "Correct this player's Riot ID for this session";
+
+  controls.append(mode, fixRiotId);
+  info.append(name, controls);
   card.append(frameWrap, info);
 
-  return { card, frame, name, mode, url: "" };
+  return { card, frame, name, mode, fixRiotId, url: "" };
 }
 
 function renderPreviews(state) {
   const root = $("previewGrid");
   const activePlayers = (state.players || []).filter(playerPageIsActive);
-  const wanted = new Set(activePlayers.map((player) => player.normalizedRiotId));
+  const wanted = new Set(activePlayers.map(previewKey));
 
   const oldEmpty = $("previewEmpty");
   if (oldEmpty) oldEmpty.remove();
@@ -150,10 +195,11 @@ function renderPreviews(state) {
     root.appendChild(empty);
   } else {
     for (const player of activePlayers) {
-      let refs = previewCards.get(player.normalizedRiotId);
+      const key = previewKey(player);
+      let refs = previewCards.get(key);
       if (!refs) {
         refs = makePreviewCard(player);
-        previewCards.set(player.normalizedRiotId, refs);
+        previewCards.set(key, refs);
         // Keep each iframe mounted once so polling does not restart its
         // browsing context or WebRTC connection.
         root.appendChild(refs.card);
@@ -164,6 +210,7 @@ function renderPreviews(state) {
         ? `${playerOverride.displayName} · ${player.riotId}`
         : player.riotId;
       refs.mode.textContent = player.shareType === "media" ? "Media" : "Camera";
+      refs.fixRiotId.onclick = () => correctPlayerRiotId(player);
 
       if (player.previewUrl && refs.url !== player.previewUrl) {
         refs.url = player.previewUrl;

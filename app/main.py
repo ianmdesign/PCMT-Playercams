@@ -9,7 +9,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .storage import AppConfig, OverrideStore, SessionStore, normalize_group_code
+from .storage import AppConfig, OverrideStore, SessionStore, normalize_group_code, stream_id_for_riot_id
+from .session_identity import SessionRiotIdStore
 from .vdo import build_preview_url, build_publish_url
 
 
@@ -19,6 +20,7 @@ STATIC_DIR = BASE_DIR / "static"
 config = AppConfig.load()
 sessions = SessionStore(config=config)
 overrides = OverrideStore()
+session_riot_ids = SessionRiotIdStore()
 
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 app = FastAPI(title="PCMT Playercams", version="0.2.0")
@@ -57,6 +59,11 @@ class HeartbeatRequest(BaseModel):
     riotId: str = Field(min_length=3, max_length=128)
 
 
+class CorrectPlayerRiotIdRequest(BaseModel):
+    connectionRiotId: str = Field(min_length=3, max_length=128)
+    riotId: str = Field(min_length=3, max_length=128)
+
+
 def require_session_token(session_id: str, x_producer_token: str | None) -> dict[str, Any]:
     session = sessions.get_session(session_id)
     if not session:
@@ -88,12 +95,21 @@ def get_override_display_name(riot_id: str) -> str | None:
     return None
 
 
+def effective_players(session_id: str) -> list[dict[str, Any]]:
+    return session_riot_ids.apply_to_players(
+        session_id,
+        sessions.list_players(session_id),
+    )
+
+
 def build_producer_state(session: dict[str, Any]) -> dict[str, Any]:
-    players = sessions.list_players(session["sessionId"])
+    players = effective_players(session["sessionId"])
     for player in players:
+        # The VDO stream remains keyed to the Riot ID originally entered by the
+        # player. A session correction changes matching/display identity only.
         preview_url, stream_id = build_preview_url(
             session["roomId"],
-            player["riotId"],
+            player["connectionRiotId"],
             config.producer_preview_bitrate_kbps,
         )
         player["streamId"] = stream_id
@@ -119,10 +135,17 @@ def build_frontend_state(group_code: str, session_override: dict[str, Any] | Non
     session_id: str | None = None
     if session:
         session_id = session["sessionId"]
+        players = effective_players(session_id)
         playercams_info = {
             "enable": session["playercamsEnabled"],
             "identifier": session["roomId"],
-            "enabledPlayers": [player["riotId"] for player in sessions.list_players(session_id)],
+            "enabledPlayers": [player["riotId"] for player in players],
+            # Effective Riot ID -> actual live VDO stream ID. This lets a producer
+            # correct a mistyped Riot ID without asking the player to reconnect.
+            "streamMappings": {
+                player["riotId"]: stream_id_for_riot_id(player["connectionRiotId"])
+                for player in players
+            },
         }
     return {
         "groupCode": normalized,
@@ -275,8 +298,32 @@ async def end_session(
 ) -> dict[str, bool]:
     require_session_token(session_id, x_producer_token)
     sessions.end_session(session_id)
+    session_riot_ids.clear_session(session_id)
     await emit_state_to_all_frontends()
     return {"ended": True}
+
+
+@app.put("/api/producer/session/{session_id}/players/riot-id")
+async def correct_player_riot_id(
+    session_id: str,
+    payload: CorrectPlayerRiotIdRequest,
+    x_producer_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    session = require_session_token(session_id, x_producer_token)
+    try:
+        player = session_riot_ids.set_correction(
+            session_id,
+            payload.connectionRiotId,
+            payload.riotId,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await emit_state_to_all_frontends()
+    return {
+        "player": player,
+        "session": build_producer_state(session),
+    }
 
 
 @app.get("/api/producer/session/{session_id}/name-overrides")
@@ -318,8 +365,22 @@ async def delete_name_override(
 
 @app.post("/api/join/{token}/register")
 async def register_player(token: str, payload: JoinRequest) -> dict[str, Any]:
+    session = sessions.get_session_by_token(token)
+    if not session:
+        raise HTTPException(status_code=400, detail="Playercam session is not active")
     try:
-        session, player = sessions.register_player(token, payload.riotId, payload.shareType)
+        # If this player was already corrected in this session and reloads the
+        # page using the corrected Riot ID, keep the original connection identity
+        # so VDO.Ninja republishes to the same live stream ID.
+        connection_riot_id = session_riot_ids.connection_riot_id_for_effective(
+            session["sessionId"],
+            payload.riotId,
+        )
+        session, player = sessions.register_player(
+            token,
+            connection_riot_id,
+            payload.shareType,
+        )
         vdo_url, stream_id = build_publish_url(
             session["roomId"],
             player["riotId"],
@@ -329,12 +390,14 @@ async def register_player(token: str, payload: JoinRequest) -> dict[str, Any]:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    effective_player = session_riot_ids.apply_to_player(session["sessionId"], player)
     await emit_state_to_all_frontends()
     return {
         "sessionId": session["sessionId"],
         "roomId": session["roomId"],
-        "riotId": player["riotId"],
-        "displayName": get_override_display_name(player["riotId"]),
+        "connectionRiotId": player["riotId"],
+        "riotId": effective_player["riotId"],
+        "displayName": get_override_display_name(effective_player["riotId"]),
         "shareType": player["shareType"],
         "streamId": stream_id,
         "vdoUrl": vdo_url,
@@ -343,14 +406,22 @@ async def register_player(token: str, payload: JoinRequest) -> dict[str, Any]:
 
 @app.post("/api/join/{token}/heartbeat")
 async def player_heartbeat(token: str, payload: HeartbeatRequest) -> dict[str, Any]:
+    session = sessions.get_session_by_token(token)
+    if not session:
+        raise HTTPException(status_code=400, detail="Playercam session is not active")
     try:
         sessions.heartbeat_player(token, payload.riotId)
+        effective_riot_id = session_riot_ids.get_effective_riot_id(
+            session["sessionId"],
+            payload.riotId,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "ok": True,
-        "riotId": payload.riotId,
-        "displayName": get_override_display_name(payload.riotId),
+        "connectionRiotId": payload.riotId,
+        "riotId": effective_riot_id,
+        "displayName": get_override_display_name(effective_riot_id),
     }
 
 

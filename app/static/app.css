@@ -900,3 +900,27 @@ body.embed-mode {
     gap: 1px;
   }
 }
+
+
+/* Session-only Riot ID correction control on producer previews. */
+.preview-controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.preview-fix-riot-id {
+  border: 0;
+  padding: 0;
+  color: rgba(255,255,255,.64);
+  background: transparent;
+  font-size: 10px;
+  font-weight: 750;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.preview-fix-riot-id:hover {
+  color: #fff;
+}
