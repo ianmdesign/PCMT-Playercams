@@ -4,12 +4,13 @@ from pathlib import Path
 from typing import Any
 
 import socketio
-from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .storage import AppConfig, OverrideStore, SessionStore, normalize_group_code, stream_id_for_riot_id
+from .admin_auth import AdminAuth
+from .storage import DATA_DIR, AppConfig, OverrideStore, SessionStore, normalize_group_code, stream_id_for_riot_id
 from .session_identity import SessionRiotIdStore
 from .vdo import build_preview_url, build_publish_url
 
@@ -21,6 +22,7 @@ config = AppConfig.load()
 sessions = SessionStore(config=config)
 overrides = OverrideStore()
 session_riot_ids = SessionRiotIdStore()
+admin_auth = AdminAuth(DATA_DIR, "pcmt_playercams_admin")
 
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 app = FastAPI(title="PCMT Playercams", version="0.2.0")
@@ -35,6 +37,10 @@ frontend_sessions: dict[str, str | None] = {}
 
 class SessionRequest(BaseModel):
     groupCode: str = Field(min_length=1, max_length=64)
+
+
+class AdminLoginRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=256)
 
 
 class RebindRequest(BaseModel):
@@ -186,14 +192,20 @@ async def emit_state_to_all_frontends() -> None:
 
 @app.get("/")
 async def producer_page() -> FileResponse:
-    return FileResponse(STATIC_DIR / "producer.html")
+    return FileResponse(
+        STATIC_DIR / "producer.html",
+        headers={"Strict-Transport-Security": "max-age=31536000"},
+    )
 
 
 @app.get("/producer/{session_id}")
 async def producer_session_page(session_id: str) -> FileResponse:
     # The session identifier is not authentication. Serve the producer shell and
     # let the token-protected API decide whether the URL fragment is valid.
-    return FileResponse(STATIC_DIR / "producer.html")
+    return FileResponse(
+        STATIC_DIR / "producer.html",
+        headers={"Strict-Transport-Security": "max-age=31536000"},
+    )
 
 
 @app.get("/join/{token}")
@@ -213,8 +225,28 @@ async def status() -> dict[str, Any]:
     return {"status": "UP", "version": "0.2.0"}
 
 
+@app.get("/api/admin/session")
+async def admin_session(request: Request, response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Vary"] = "Cookie"
+    return admin_auth.status(request)
+
+
+@app.post("/api/admin/login")
+async def admin_login(payload: AdminLoginRequest, request: Request, response: Response) -> dict[str, Any]:
+    return admin_auth.login(request, response, payload.password)
+
+
+@app.post("/api/admin/logout")
+async def admin_logout(request: Request, response: Response) -> dict[str, bool]:
+    admin_auth.require(request)
+    admin_auth.logout(response)
+    return {"signedOut": True}
+
+
 @app.post("/api/producer/session")
-async def create_session(payload: SessionRequest) -> JSONResponse:
+async def create_session(payload: SessionRequest, request: Request) -> JSONResponse:
+    admin_auth.require(request)
     try:
         session, created, producer_token = sessions.create_or_reuse(payload.groupCode)
     except ValueError as exc:
@@ -232,7 +264,8 @@ async def create_session(payload: SessionRequest) -> JSONResponse:
             "created": True,
             "producerToken": producer_token,
             "session": build_producer_state(session),
-        }
+        },
+        headers={"Cache-Control": "no-store"},
     )
 
 

@@ -10,6 +10,7 @@ services:
       CONFIG_DIR: /app/config
       DATA_DIR: /data
       PORT: 5400
+      SPECTRA_ORGANIZATION_CODE: ${SPECTRA_ORGANIZATION_CODE:-}
     volumes:
       # Config is read/write because persistent name overrides are stored here.
       - ./config:/app/config

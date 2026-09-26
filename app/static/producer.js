@@ -8,6 +8,8 @@ let lastRosterUpdated = null;
 const previewCards = new Map();
 let groupCodeDraftDirty = false;
 const overrideDrafts = new Map();
+let creationCsrfToken = "";
+let creationLoginPromise = Promise.resolve();
 
 
 function getSessionIdFromPath() {
@@ -49,6 +51,7 @@ function configureResumeCard(sessionId, message = "") {
   requestedSessionId = sessionId;
   $("startTitle").textContent = `Open session ${sessionId}`;
   $("groupCodeLabel").classList.add("hidden");
+  $("organizationCodeLabel").classList.add("hidden");
   $("openSession").classList.add("hidden");
   $("startError").textContent = message;
 }
@@ -60,9 +63,13 @@ function headers() {
 }
 
 async function api(path, options = {}) {
+  const requestHeaders = { ...headers(), ...(options.headers || {}) };
+  if (path === "/api/producer/session" && options.method === "POST" && creationCsrfToken) {
+    requestHeaders["X-Admin-CSRF"] = creationCsrfToken;
+  }
   const response = await fetch(path, {
     ...options,
-    headers: { ...headers(), ...(options.headers || {}) },
+    headers: requestHeaders,
   });
   let body = null;
   try { body = await response.json(); } catch { body = null; }
@@ -73,6 +80,24 @@ async function api(path, options = {}) {
     throw error;
   }
   return body;
+}
+
+async function loadCreationLogin() {
+  if (location.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)) {
+    $("organizationCode").disabled = true;
+    $("startError").textContent = "Open this site using HTTPS before entering the organization code.";
+    return;
+  }
+  try {
+    const state = await api("/api/admin/session");
+    if (state.authenticated) {
+      creationCsrfToken = state.csrfToken;
+      $("organizationCodeLabel").classList.add("hidden");
+      $("signOut").classList.remove("hidden");
+    }
+  } catch (error) {
+    $("startError").textContent = error.message;
+  }
 }
 
 function connectedPlayerMap(players) {
@@ -420,6 +445,7 @@ async function openSession() {
     await loadSessionById(requestedSessionId);
     return;
   }
+  await creationLoginPromise;
 
   const groupCode = $("groupCode").value.trim();
   if (!groupCode) {
@@ -427,6 +453,21 @@ async function openSession() {
     return;
   }
   try {
+    if (!creationCsrfToken) {
+      if (location.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)) {
+        throw new Error("Open this site using HTTPS before entering the organization code.");
+      }
+      const password = $("organizationCode").value.trim();
+      if (!password) throw new Error("Enter the Spectra organization code.");
+      const login = await api("/api/admin/login", {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      });
+      $("organizationCode").value = "";
+      creationCsrfToken = login.csrfToken;
+      $("organizationCodeLabel").classList.add("hidden");
+      $("signOut").classList.remove("hidden");
+    }
     const result = await api("/api/producer/session", {
       method: "POST",
       body: JSON.stringify({ groupCode }),
@@ -474,6 +515,13 @@ async function removeOverride(riotId) {
 
 $("openSession").addEventListener("click", openSession);
 $("groupCode").addEventListener("keydown", (event) => { if (event.key === "Enter") openSession(); });
+$("organizationCode").addEventListener("keydown", (event) => { if (event.key === "Enter") openSession(); });
+$("signOut").addEventListener("click", async () => {
+  try {
+    await api("/api/admin/logout", { method: "POST", headers: { "X-Admin-CSRF": creationCsrfToken } });
+    location.reload();
+  } catch (error) { $("startError").textContent = error.message; }
+});
 $("currentGroup").addEventListener("input", () => {
   groupCodeDraftDirty = true;
 });
@@ -575,4 +623,6 @@ $("endSession").addEventListener("click", async () => {
 if (requestedSessionId) {
   configureResumeCard(requestedSessionId);
   loadSessionById(requestedSessionId, { silent: true });
+} else {
+  creationLoginPromise = loadCreationLogin();
 }

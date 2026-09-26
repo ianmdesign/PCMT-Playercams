@@ -23,11 +23,15 @@
 
         <div class="start-card stack">
           <h1 id="startTitle">Welcome to PCMT Playercams</h1>
-          <p>Enter the Spectra group code to open or create the production playercam session.</p>
+          <p>Enter the Spectra group code and, on a new browser, the organization code to create a playercam session.</p>
           <label id="groupCodeLabel">Spectra Group Code
             <input id="groupCode" autocomplete="off" placeholder="Enter group code" />
           </label>
+          <label id="organizationCodeLabel">Spectra Organization Code
+            <input id="organizationCode" type="password" autocomplete="current-password" placeholder="Enter organization code" />
+          </label>
           <button id="openSession" class="btn primary">Open Playercams</button>
+          <button id="signOut" class="btn ghost hidden" type="button">Sign out on this browser</button>
           <span id="startError" class="error"></span>
         </div>
       </div>
