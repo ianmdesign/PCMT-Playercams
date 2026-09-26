@@ -40,11 +40,11 @@ jobs:
           DATA_DIR: ${{ runner.temp }}/pcmt-playercams-data
         run: |
           python - <<'PY'
-          from app.storage import AppConfig
+          from app.storage import AppConfig, SESSION_LIFETIME_HOURS
           config = AppConfig.load()
           assert config.room_prefix
           assert config.room_random_digits >= 6
-          assert config.session_lifetime_hours >= 1
+          assert SESSION_LIFETIME_HOURS >= 1
           print("Configuration is valid.")
           PY
 
