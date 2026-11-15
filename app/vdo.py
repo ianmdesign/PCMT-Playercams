@@ -104,14 +104,18 @@ def build_audio_publish_url(room_id: str, riot_id: str, audio_stream_id: str) ->
     from urllib.parse import quote
 
     return "https://vdo.ninja/?" + "&".join([
-        # Dedicated, separate microphone room. Disable room multicast:
-        # only explicit direct-view subscriptions should receive mic audio.
+        # Keep microphones separate from the playercam video room.
         f"room={quote(room_id + '_li', safe='')}",
         f"push={quote(audio_stream_id, safe='')}",
         f"label={quote(riot_id + ' microphone', safe='')}",
         "miconly",
         "deafen",
+        # Prevent VDO.Ninja room guests from receiving other guest streams.
+        # This is a viewer-side filter on the mic publisher; production's
+        # explicit room+view receivers still subscribe directly to each mic.
+        "directoronly",
         "novideo",
+        # Video-only room bandwidth cap; NOT an audio/privacy restriction.
         "roombitrate=0",
         "showlist=0",
         "chatbutton=0",
