@@ -54,5 +54,17 @@ class VdoUrlTests(unittest.TestCase):
         self.assertIn("&cleanoutput", url)
 
 
+    def test_microphone_url_transmits_only_and_deafens(self):
+        from app.vdo import build_audio_publish_url
+        url = build_audio_publish_url("private-room", "Player#TAG", "pcmtmic_randomstream")
+        self.assertIn("push=pcmtmic_randomstream", url)
+        self.assertIn("&miconly", url)
+        self.assertIn("&deafen", url)
+        self.assertIn("&novideo", url)
+        self.assertIn("roombitrate=0", url)
+        self.assertNotIn("&noaudio", url)
+        self.assertNotIn("audiodevice=0", url)
+
+
 if __name__ == "__main__":
     unittest.main()
