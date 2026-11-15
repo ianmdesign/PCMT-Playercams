@@ -106,7 +106,7 @@ def build_audio_publish_url(room_id: str, riot_id: str, audio_stream_id: str) ->
     return "https://vdo.ninja/?" + "&".join([
         # Dedicated, separate microphone room. Disable room multicast:
         # only explicit direct-view subscriptions should receive mic audio.
-        f"room={quote(room_id + '-listenin', safe='')}",
+        f"room={quote(room_id + '_li', safe='')}",
         f"push={quote(audio_stream_id, safe='')}",
         f"label={quote(riot_id + ' microphone', safe='')}",
         "miconly",
