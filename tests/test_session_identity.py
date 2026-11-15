@@ -15,7 +15,7 @@ class SessionRiotIdStoreTests(unittest.TestCase):
         self.db_path = root / "playercams.sqlite3"
         self.sessions = SessionStore(
             self.db_path,
-            AppConfig(public_base_url="http://localhost:5400"),
+            AppConfig(public_base_url="http://localhost:5400", spectra_output_endpoints=(("NA", "https://na.valospectra.com:5200"),)),
         )
         self.identities = SessionRiotIdStore(self.db_path)
 
@@ -23,7 +23,7 @@ class SessionRiotIdStoreTests(unittest.TestCase):
         self.temp.cleanup()
 
     def _session_with_player(self, group: str, riot_id: str):
-        session, _, _ = self.sessions.create_or_reuse(group)
+        session, _, _ = self.sessions.create_or_reuse(group, "https://na.valospectra.com:5200")
         self.sessions.register_player(session["joinToken"], riot_id, "video")
         return session
 
