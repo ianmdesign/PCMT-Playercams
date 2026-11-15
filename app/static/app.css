@@ -1029,3 +1029,32 @@ body.embed-mode {
   .mic-setup-frame { min-height: 240px; }
 }
 
+
+/* Admin mic badges: the backend confirms opt-in, not VDO mic capture. */
+.mic-state {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  max-width: 100%;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.15);
+  padding: 3px 8px;
+  font-size: 10px;
+  line-height: 1.35;
+  font-weight: 750;
+  white-space: nowrap;
+  color: rgba(255,255,255,.7);
+  background: rgba(255,255,255,.08);
+}
+.mic-state[data-mic-state="enabled"] {
+  color: #a8f4ca;
+  background: rgba(36,114,76,.3);
+  border-color: rgba(67,222,139,.4);
+}
+.mic-state[data-mic-state="offline"] {
+  color: #f1d6a0;
+  background: rgba(111,77,24,.3);
+  border-color: rgba(255,200,96,.35);
+}
+.preview-controls { flex-wrap: wrap; justify-content: flex-end; }
+.player-row .mic-state { margin-top: 6px; }
