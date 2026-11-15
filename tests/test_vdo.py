@@ -67,7 +67,7 @@ class VdoUrlTests(unittest.TestCase):
         self.assertNotIn("cleanoutput", url)
         self.assertNotIn("nosettings", url)
         self.assertNotIn("nomicbutton", url)
-        self.assertIn("room=private-room-listenin", url)
+        self.assertIn("room=private-room_li", url)
 
 
 if __name__ == "__main__":
