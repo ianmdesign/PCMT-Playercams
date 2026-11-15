@@ -924,3 +924,11 @@ body.embed-mode {
 .preview-fix-riot-id:hover {
   color: #fff;
 }
+
+/* Optional isolated microphone uplink (never any PCMT return audio). */
+.mic-optin { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; margin: 14px 0 8px; }
+.mic-optin input { width: 18px; height: 18px; min-height: 18px; flex: 0 0 auto; }
+.mic-publisher-panel { position: absolute; right: 14px; bottom: 14px; z-index: 5; display: flex; flex-direction: column; gap: 3px; max-width: 320px; padding: 9px 12px; border-radius: 8px; background: rgba(8,15,25,.9); font-size: 12px; pointer-events: none; }
+.mic-publisher-panel span { color: rgba(255,255,255,.75); }
+.mic-publisher-panel iframe { width: 1px; height: 1px; opacity: 0; border: 0; pointer-events: none; }
+.embed-toolbar #toggleMic { margin-left: auto; }
