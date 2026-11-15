@@ -57,6 +57,7 @@ def stream_id_for_riot_id(riot_id: str) -> str:
 @dataclass(frozen=True)
 class AppConfig:
     public_base_url: str = "http://localhost:5400"
+    spectra_output_endpoint: str = ""
     group_alias_grace_minutes: int = 30
     room_prefix: str = "pcmtplayercams"
     room_random_digits: int = 12
@@ -72,6 +73,7 @@ class AppConfig:
         raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         return cls(
             public_base_url=str(raw.get("publicBaseUrl", cls.public_base_url)).rstrip("/"),
+            spectra_output_endpoint=str(raw.get("spectraOutputEndpoint", cls.spectra_output_endpoint)).strip().rstrip("/"),
             group_alias_grace_minutes=max(
                 0, int(raw.get("groupAliasGraceMinutes", cls.group_alias_grace_minutes))
             ),
