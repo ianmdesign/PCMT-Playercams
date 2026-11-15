@@ -31,13 +31,18 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Trusted Spectra output rosters are transient. Unauthenticated browser-submitted
 # frontend_roster events are intentionally ignored.
-rosters: dict[str, dict[str, Any]] = {}
-frontend_groups: dict[str, str] = {}
+rosters: dict[tuple[str, str], dict[str, Any]] = {}
+frontend_groups: dict[str, tuple[str, str]] = {}
 frontend_sessions: dict[str, str | None] = {}
 
 
 class SessionRequest(BaseModel):
     groupCode: str = Field(min_length=1, max_length=64)
+    spectraEndpoint: str = Field(default="", max_length=512)
+
+
+class AssignServerRequest(BaseModel):
+    spectraEndpoint: str = Field(min_length=1, max_length=512)
 
 
 class AdminLoginRequest(BaseModel):
@@ -71,6 +76,14 @@ class CorrectPlayerRiotIdRequest(BaseModel):
     riotId: str = Field(min_length=3, max_length=128)
 
 
+def choose_spectra_endpoint(value: str) -> str:
+    if not value and len(config.spectra_servers) == 1:
+        return next(iter(config.spectra_servers.values()))
+    if value not in config.spectra_servers.values():
+        raise ValueError("Select a configured Spectra server")
+    return value
+
+
 def require_session_token(session_id: str, x_producer_token: str | None) -> dict[str, Any]:
     session = sessions.get_session(session_id)
     if not session:
@@ -83,8 +96,8 @@ def require_session_token(session_id: str, x_producer_token: str | None) -> dict
 ROSTER_TTL_MS = 120_000
 
 
-def get_trusted_roster(group_code: str) -> dict[str, Any] | None:
-    roster = rosters.get(normalize_group_code(group_code))
+def get_trusted_roster(endpoint: str, group_code: str) -> dict[str, Any] | None:
+    roster = rosters.get((endpoint, normalize_group_code(group_code)))
     if roster and now_ms() - int(roster.get("updatedAt", 0)) <= ROSTER_TTL_MS:
         return roster
     return None
@@ -94,14 +107,14 @@ def get_latest_roster(session: dict[str, Any]) -> dict[str, Any] | None:
     candidates = [
         roster
         for alias in sessions.list_aliases(session["sessionId"])
-        if (roster := get_trusted_roster(alias)) is not None
+        if (roster := get_trusted_roster(session["spectraEndpoint"], alias)) is not None
     ]
     return max(candidates, key=lambda item: item["updatedAt"]) if candidates else None
 
 
-def scoped_name_overrides(group_code: str, session: dict[str, Any] | None) -> list[list[str]]:
+def scoped_name_overrides(endpoint: str, group_code: str, session: dict[str, Any] | None) -> list[list[str]]:
     """Only disclose display names for the verified roster or joined players."""
-    roster = get_latest_roster(session) if session else get_trusted_roster(group_code)
+    roster = get_latest_roster(session) if session else get_trusted_roster(endpoint, group_code)
     visible_ids: set[str] = set()
     if roster:
         for team in roster["teams"]:
@@ -159,9 +172,9 @@ def build_producer_state(session: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_frontend_state(group_code: str, session_override: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_frontend_state(endpoint: str, group_code: str, session_override: dict[str, Any] | None = None) -> dict[str, Any]:
     normalized = normalize_group_code(group_code)
-    session = session_override or sessions.resolve_group(normalized)
+    session = session_override or sessions.resolve_group(normalized, endpoint)
     playercams_info: dict[str, Any] | None = None
     session_id: str | None = None
     if session:
@@ -180,26 +193,29 @@ def build_frontend_state(group_code: str, session_override: dict[str, Any] | Non
         }
     return {
         "groupCode": normalized,
+        "spectraEndpoint": endpoint,
         "sessionId": session_id,
         "playercamsInfo": playercams_info,
         # Preserve Spectra's array-of-tuples format without exposing the whole
         # persistent override database to anonymous frontend subscribers.
-        "nameOverrides": scoped_name_overrides(normalized, session),
+        "nameOverrides": scoped_name_overrides(endpoint, normalized, session),
     }
 
 
 async def frontend_state_for_sid(sid: str) -> dict[str, Any] | None:
-    group_code = frontend_groups.get(sid)
-    if not group_code:
+    identity = frontend_groups.get(sid)
+    if not identity:
         return None
-
+    endpoint, group_code = identity
     pinned_session_id = frontend_sessions.get(sid)
     pinned_session = sessions.get_session(pinned_session_id) if pinned_session_id else None
+    if pinned_session and pinned_session["spectraEndpoint"] != endpoint:
+        pinned_session = None
     if not pinned_session:
-        pinned_session = sessions.resolve_group(group_code)
+        pinned_session = sessions.resolve_group(group_code, endpoint)
         frontend_sessions[sid] = pinned_session["sessionId"] if pinned_session else None
 
-    return build_frontend_state(group_code, pinned_session)
+    return build_frontend_state(endpoint, group_code, pinned_session)
 
 
 async def emit_state_to_all_frontends() -> None:
@@ -216,19 +232,19 @@ async def emit_state_to_all_frontends() -> None:
             pass
 
 
-async def receive_trusted_roster(group_code: str, teams: list[dict[str, Any]]) -> None:
-    previous = get_trusted_roster(group_code)
-    rosters[group_code] = {"teams": teams, "updatedAt": now_ms()}
+async def receive_trusted_roster(endpoint: str, group_code: str, teams: list[dict[str, Any]]) -> None:
+    previous = get_trusted_roster(endpoint, group_code)
+    rosters[(endpoint, group_code)] = {"teams": teams, "updatedAt": now_ms()}
     if previous is None or previous["teams"] != teams:
         await emit_state_to_all_frontends()
 
 
-def roster_watch_needed(group_code: str) -> bool:
-    return group_code in frontend_groups.values() or sessions.resolve_group(group_code) is not None
+def roster_watch_needed(endpoint: str, group_code: str) -> bool:
+    return (endpoint, group_code) in frontend_groups.values() or sessions.resolve_group(group_code, endpoint) is not None
 
 
 roster_watcher = SpectraRosterWatcher(
-    config.spectra_output_endpoint, receive_trusted_roster, roster_watch_needed
+    config.spectra_servers, receive_trusted_roster, roster_watch_needed
 )
 
 
@@ -274,6 +290,11 @@ async def admin_session(request: Request, response: Response) -> dict[str, Any]:
     return admin_auth.status(request)
 
 
+@app.get("/api/spectra-servers")
+async def spectra_servers() -> dict[str, Any]:
+    return {"servers": [{"name": name, "endpoint": url} for name, url in config.spectra_servers.items()]}
+
+
 @app.post("/api/admin/login")
 async def admin_login(payload: AdminLoginRequest, request: Request, response: Response) -> dict[str, Any]:
     return admin_auth.login(request, response, payload.password)
@@ -290,7 +311,8 @@ async def admin_logout(request: Request, response: Response) -> dict[str, bool]:
 async def create_session(payload: SessionRequest, request: Request) -> JSONResponse:
     admin_auth.require(request)
     try:
-        session, created, producer_token = sessions.create_or_reuse(payload.groupCode)
+        endpoint = choose_spectra_endpoint(payload.spectraEndpoint)
+        session, created, producer_token = sessions.create_or_reuse(payload.groupCode, endpoint)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -300,7 +322,7 @@ async def create_session(payload: SessionRequest, request: Request) -> JSONRespo
             detail="An active playercam session already exists for this group code. Open its private producer link instead.",
         )
 
-    roster_watcher.ensure_watch(session["groupCode"])
+    roster_watcher.ensure_watch(session["spectraEndpoint"], session["groupCode"])
     await emit_state_to_all_frontends()
     return JSONResponse(
         {
@@ -318,7 +340,24 @@ async def producer_session(
     x_producer_token: str | None = Header(default=None),
 ) -> dict[str, Any]:
     session = require_session_token(session_id, x_producer_token)
-    roster_watcher.ensure_watch(session["groupCode"])
+    if session["spectraEndpoint"]:
+        roster_watcher.ensure_watch(session["spectraEndpoint"], session["groupCode"])
+    return build_producer_state(session)
+
+
+@app.post("/api/producer/session/{session_id}/spectra-server")
+async def assign_legacy_server(
+    session_id: str,
+    payload: AssignServerRequest,
+    x_producer_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    require_session_token(session_id, x_producer_token)
+    try:
+        session = sessions.assign_legacy_endpoint(session_id, choose_spectra_endpoint(payload.spectraEndpoint))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    roster_watcher.ensure_watch(session["spectraEndpoint"], session["groupCode"])
+    await emit_state_to_all_frontends()
     return build_producer_state(session)
 
 
@@ -345,11 +384,14 @@ async def rebind_group_code(
     x_producer_token: str | None = Header(default=None),
 ) -> dict[str, Any]:
     require_session_token(session_id, x_producer_token)
+    if not sessions.get_session(session_id)["spectraEndpoint"]:
+        raise HTTPException(status_code=409, detail="Select a Spectra server for this legacy session first")
     try:
         session = sessions.rebind_group(session_id, payload.groupCode)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    roster_watcher.ensure_watch(session["groupCode"])
+    if session["spectraEndpoint"]:
+        roster_watcher.ensure_watch(session["spectraEndpoint"], session["groupCode"])
     await emit_state_to_all_frontends()
     return build_producer_state(session)
 
@@ -519,13 +561,18 @@ async def frontend_logon(sid: str, data: Any) -> None:
     if not isinstance(data, dict):
         return
     group_code = normalize_group_code(str(data.get("groupCode", "")))
-    if not group_code or len(group_code) > 64:
+    endpoint = str(data.get("spectraEndpoint", "")).strip().rstrip("/")
+    if not endpoint and len(config.spectra_servers) == 1:
+        endpoint = next(iter(config.spectra_servers.values()))
+    if not group_code or len(group_code) > 64 or endpoint not in config.spectra_servers.values():
+        frontend_groups.pop(sid, None)
+        frontend_sessions.pop(sid, None)
         return
-    frontend_groups[sid] = group_code
-    resolved = sessions.resolve_group(group_code)
+    frontend_groups[sid] = (endpoint, group_code)
+    resolved = sessions.resolve_group(group_code, endpoint)
     frontend_sessions[sid] = resolved["sessionId"] if resolved else None
-    roster_watcher.ensure_watch(group_code)
-    await sio.emit("pcmt_tools_data", build_frontend_state(group_code, resolved), to=sid)
+    roster_watcher.ensure_watch(endpoint, group_code)
+    await sio.emit("pcmt_tools_data", build_frontend_state(endpoint, group_code, resolved), to=sid)
 
 
 # Legacy frontend_roster messages are deliberately ignored: only trusted
