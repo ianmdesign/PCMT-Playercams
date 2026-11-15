@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hmac
 from typing import Any
 
 import socketio
@@ -10,10 +11,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .admin_auth import AdminAuth
-from .storage import DATA_DIR, AppConfig, OverrideStore, SessionStore, normalize_group_code, normalize_riot_id, now_ms, stream_id_for_riot_id
+from .storage import DATA_DIR, AppConfig, OverrideStore, SessionStore, normalize_group_code, normalize_riot_id, now_ms, stream_id_for_riot_id, audio_stream_id_for_player
 from .session_identity import SessionRiotIdStore
 from .spectra_roster import SpectraRosterWatcher, select_unambiguous_roster
-from .vdo import build_preview_url, build_publish_url
+from .vdo import build_preview_url, build_publish_url, build_audio_publish_url
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -34,6 +35,8 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 rosters: dict[tuple[str, str], dict[str, Any]] = {}
 frontend_groups: dict[str, str] = {}
 frontend_sessions: dict[str, str | None] = {}
+# Only listener browsers with a session-scoped read-only secret receive audio IDs.
+listen_in_subscribers: dict[str, tuple[str, str]] = {}
 
 
 class SessionRequest(BaseModel):
@@ -52,6 +55,15 @@ class EnabledRequest(BaseModel):
     enabled: bool
 
 
+class ListenInRequest(BaseModel):
+    listenIn: bool | str
+
+
+class AudioEnabledRequest(BaseModel):
+    riotId: str = Field(min_length=3, max_length=128)
+    enabled: bool
+
+
 class OverrideRequest(BaseModel):
     riotId: str = Field(min_length=3, max_length=128)
     displayName: str = Field(min_length=1, max_length=64)
@@ -60,6 +72,7 @@ class OverrideRequest(BaseModel):
 class JoinRequest(BaseModel):
     riotId: str = Field(min_length=3, max_length=128)
     shareType: str
+    audioEnabled: bool = False
 
 
 class HeartbeatRequest(BaseModel):
@@ -153,6 +166,9 @@ def build_producer_state(session: dict[str, Any]) -> dict[str, Any]:
         "producerPreviewBitrateKbps": config.producer_preview_bitrate_kbps,
         "nameOverrides": overrides.list_entries(),
         "roster": get_latest_roster(session),
+        # This is a read-only listener capability; keep it off normal browser
+        # sources and never expose it in pcmt_tools_data.
+        "listenInToken": session["listenInToken"],
     }
 
 
@@ -166,6 +182,7 @@ def build_frontend_state(group_code: str, session_override: dict[str, Any] | Non
         players = effective_players(session_id)
         playercams_info = {
             "enable": session["playercamsEnabled"],
+            "listenIn": session["listenIn"],
             "identifier": session["roomId"],
             "enabledPlayers": [player["riotId"] for player in players],
             # Effective Riot ID -> actual live VDO stream ID. This lets a producer
@@ -199,18 +216,45 @@ async def frontend_state_for_sid(sid: str) -> dict[str, Any] | None:
     return build_frontend_state(group_code, pinned_session)
 
 
+def build_listen_in_state(session: dict[str, Any]) -> dict[str, Any]:
+    side = session["listenIn"]
+    result: dict[str, Any] = {"sessionId": session["sessionId"], "listenIn": side, "audioStreamMappings": {}}
+    if side not in ("left", "right") or not session["playercamsEnabled"]:
+        return result
+    roster = get_latest_roster(session)
+    teams = roster.get("teams", []) if roster else []
+    team_index = 0 if side == "left" else 1
+    if len(teams) <= team_index:
+        return result
+    permitted = {
+        normalize_riot_id(p["riotId"])
+        for p in teams[team_index].get("players", [])
+        if isinstance(p, dict) and isinstance(p.get("riotId"), str)
+    }
+    result["audioStreamMappings"] = {
+        p["riotId"]: audio_stream_id_for_player(session, p["connectionRiotId"])
+        for p in effective_players(session["sessionId"])
+        if p.get("audioEnabled") and normalize_riot_id(p["riotId"]) in permitted
+    }
+    return result
+
+
 async def emit_state_to_all_frontends() -> None:
-    if not frontend_groups:
-        return
     for sid in list(frontend_groups.keys()):
         try:
             state = await frontend_state_for_sid(sid)
             if state:
                 await sio.emit("pcmt_tools_data", state, to=sid)
         except Exception:
-            # A disconnect event will clean the normal path. This keeps one stale
-            # SID from blocking an update to all other connected overlays.
+            # A disconnect event will clean the normal path.
             pass
+    for sid, (group_code, session_id) in list(listen_in_subscribers.items()):
+        session = sessions.resolve_group(group_code)
+        if not session or session["sessionId"] != session_id:
+            listen_in_subscribers.pop(sid, None)
+            await sio.emit("pcmt_listen_in_data", {"listenIn": False, "audioStreamMappings": {}}, to=sid)
+            continue
+        await sio.emit("pcmt_listen_in_data", build_listen_in_state(session), to=sid)
 
 
 async def receive_trusted_roster(
@@ -376,6 +420,23 @@ async def set_enabled(
     return build_producer_state(session)
 
 
+@app.put("/api/producer/session/{session_id}/listen-in")
+async def set_listen_in(
+    session_id: str,
+    payload: ListenInRequest,
+    x_producer_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    require_session_token(session_id, x_producer_token)
+    if payload.listenIn not in (False, "left", "right") or payload.listenIn is True:
+        raise HTTPException(status_code=400, detail="Listen-In must be false, left or right")
+    try:
+        session = sessions.set_listen_in(session_id, payload.listenIn)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await emit_state_to_all_frontends()
+    return build_producer_state(session)
+
+
 @app.post("/api/producer/session/{session_id}/end")
 async def end_session(
     session_id: str,
@@ -465,6 +526,7 @@ async def register_player(token: str, payload: JoinRequest) -> dict[str, Any]:
             token,
             connection_riot_id,
             payload.shareType,
+            payload.audioEnabled,
         )
         vdo_url, stream_id = build_publish_url(
             session["roomId"],
@@ -486,6 +548,29 @@ async def register_player(token: str, payload: JoinRequest) -> dict[str, Any]:
         "shareType": player["shareType"],
         "streamId": stream_id,
         "vdoUrl": vdo_url,
+        "audioUrl": build_audio_publish_url(
+            session["roomId"], player["riotId"],
+            audio_stream_id_for_player(session, player["riotId"]),
+        ) if payload.audioEnabled else None,
+    }
+
+
+@app.put("/api/join/{token}/audio")
+async def set_player_audio(token: str, payload: AudioEnabledRequest) -> dict[str, Any]:
+    session = sessions.get_session_by_token(token)
+    if not session:
+        raise HTTPException(status_code=400, detail="Playercam session is not active")
+    try:
+        sessions.set_audio_enabled(token, payload.riotId, payload.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await emit_state_to_all_frontends()
+    return {
+        "audioEnabled": payload.enabled,
+        "audioUrl": build_audio_publish_url(
+            session["roomId"], payload.riotId,
+            audio_stream_id_for_player(session, payload.riotId),
+        ) if payload.enabled else None,
     }
 
 
@@ -519,6 +604,7 @@ async def connect(sid: str, environ: dict[str, Any], auth: Any = None) -> None:
 async def disconnect(sid: str) -> None:
     frontend_groups.pop(sid, None)
     frontend_sessions.pop(sid, None)
+    listen_in_subscribers.pop(sid, None)
 
 
 @sio.on("frontend_logon")
@@ -533,6 +619,22 @@ async def frontend_logon(sid: str, data: Any) -> None:
     frontend_sessions[sid] = resolved["sessionId"] if resolved else None
     roster_watcher.ensure_watch(group_code)
     await sio.emit("pcmt_tools_data", build_frontend_state(group_code, resolved), to=sid)
+
+
+@sio.on("listen_in_logon")
+async def listen_in_logon(sid: str, data: Any) -> None:
+    listen_in_subscribers.pop(sid, None)
+    if not isinstance(data, dict):
+        return
+    group_code = normalize_group_code(str(data.get("groupCode", "")))
+    token = data.get("token")
+    if not group_code or len(group_code) > 64 or not isinstance(token, str) or len(token) > 128:
+        return
+    session = sessions.resolve_group(group_code)
+    if not session or not hmac.compare_digest(session["listenInToken"], token):
+        return
+    listen_in_subscribers[sid] = (group_code, session["sessionId"])
+    await sio.emit("pcmt_listen_in_data", build_listen_in_state(session), to=sid)
 
 
 # Legacy frontend_roster messages are deliberately ignored: only trusted
