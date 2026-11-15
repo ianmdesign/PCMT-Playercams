@@ -60,7 +60,7 @@ The service listens on port `5400` by default.
 ```json
 {
   "publicBaseUrl": "http://localhost:5400",
-  "spectraOutputEndpoint": "https://na.valospectra.com:5200",
+  "spectraOutputEndpoints": {\n    "NA": "https://na.valospectra.com:5200",\n    "EU": "https://eu.valospectra.com:5200",\n    "Local": "http://192.168.x.x:5200"\n  },
   "groupAliasGraceMinutes": 30,
   "roomPrefix": "pcmtplayercams",
   "roomRandomDigits": 12,
@@ -72,15 +72,17 @@ The service listens on port `5400` by default.
 
 `publicBaseUrl` defaults to `http://localhost:5400`. Like PCMT Mapban, change it directly in `config/config.json` when deploying behind a public hostname; for example, set it to the HTTPS URL used by players. Set `SPECTRA_ORGANIZATION_CODE` to your existing Spectra organization code in the playercams container (or the local `.env` when using Compose). Creating a session requires this code plus the Spectra group code. The browser remembers the login for 30 days with an HTTP-only cookie; the code itself is not saved in browser storage. The signing key persists in `/data`. If the environment variable is empty, creation stays disabled. Once created, producer access is granted exclusively by the per-session private Producer URL, even on another browser without the login cookie. The token lives after `#token=` so it is not sent as part of the HTTP request URL; the producer page reads it locally and supplies it in authenticated API requests. The producer token also authorizes name-override edits. Treat the complete Producer URL as a secret. `producerPreviewBitrateKbps` controls only the producer dashboard preview request and defaults to 500 kbps per active playercam; it does not cap the broadcast overlay feed. `publisherMaxBitrateKbps` is the per-viewer sender-side ceiling, while `publisherTotalBitrateKbps` caps aggregate outbound player video across the broadcast overlay, producer preview, and any other direct viewers. The defaults of 2500/3000 kbps line the publisher ceiling up with the normal 2500 kbps broadcast request and leave 500 kbps for the producer preview, reducing player upload and producer preview decode load without lowering the broadcast viewer target. The player-facing link has its own separate random join token and never exposes the Spectra group code as authentication.
 
-### Trusted Spectra roster source (required for automatic current-match names)
+### Trusted multi-server roster sources
 
-Set `spectraOutputEndpoint` in the deployed `config/config.json` to the trusted Spectra **output** Socket.IO endpoint that your OBS frontend actually uses (for example `https://na.valospectra.com:5200`, `https://eu.valospectra.com:5200`, or an explicitly trusted internal Spectra endpoint). The checked-in default is intentionally blank; this is a deployment-specific setting. This service binds to **one** Spectra output server; do not use the same playercams instance for simultaneous group-code collisions across multiple Spectra servers.
+Set \`spectraOutputEndpoints\` in deployed \`config/config.json\` to a mapping of labels to **operator-approved** Spectra output origins. The NA, EU, and Local addresses above are examples; **replace the local example** with the actual address your HUD connects to. These are explicitly configured trusted upstream connections; the browser cannot make Playercams connect to an arbitrary URL.
 
-The Playercams backend subscribes to Spectra `match_data` and derives the current-match roster itself. Public HUD clients may still send legacy `frontend_roster` packets, but those are ignored; a browser cannot choose the Spectra endpoint or spoof producer roster data. Only current roster players (plus players registered in the active camera session) receive matching persistent name overrides over public Socket.IO, rather than all historical saved overrides. The full override list remains available to holders of the private producer token.
+The producer selects NA, EU, or Local when creating each session. A session is permanently pinned to its chosen server and group-code pair; rebinding its group code retains the server and VDO room. Existing producer links and join tokens are unchanged. Sessions imported from the original one-endpoint release inherit that configured legacy endpoint. Otherwise an existing unassigned session must be explicitly assigned through the private producer page; this does not rotate any tokens.
 
-**Upgrade requirement:** Set this endpoint **before updating the running image**. Without it, playercam video and producer-authenticated controls continue working, but the automatic Current Match roster is empty and persistent name overrides for players without a camera registration cannot be sent to the HUD (fail closed). If the endpoint is offline, the last verified roster expires from the producer view after 2 minutes; publishing resumes when Spectra reconnects.
+The HUD must send \`spectraEndpoint\` alongside \`groupCode\` in \`frontend_logon\` (the companion HUD PR implements this). Old HUD clients that omit the endpoint only work when one server is configured. All public name-override payloads are scoped by the same trusted server plus group code, so simultaneous NA/EU/local games can reuse the same group code without mixing rosters or camera sessions.
 
-You can leave the current PCMT frontend unchanged. Its legacy roster messages are ignored by the new backend; no additional HUD or organization-code credentials are needed.
+The legacy \`spectraOutputEndpoint\` key is still accepted as a migration hint if present. When all servers are configured, omit it rather than setting it to an arbitrary default.
+
+**Upgrade order:** Configure the three trusted endpoints, merge and deploy the companion HUD change, then deploy this Playercams update. Do not deploy the multi-server Playercams backend before the matching HUD update. Legacy browser sources without \`spectraEndpoint\` will be rejected when multiple servers are configured.
 
 Use an HTTPS public hostname with **Force SSL** in Nginx Proxy Manager. The organization code is submitted in the HTTPS request body, never in a URL; the page prevents submitting it over public HTTP. Localhost development may use HTTP. The producer page sends HSTS for future HTTPS visits.
 
@@ -118,7 +120,7 @@ The lowercase key is only the normalized lookup key. The original Riot ID casing
 The PCMT frontend connects by Socket.IO and emits:
 
 ```js
-frontend_logon { groupCode }
+frontend_logon { groupCode, spectraEndpoint }
 ```
 
 The service replies and pushes updates as:
