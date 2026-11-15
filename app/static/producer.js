@@ -497,7 +497,6 @@ function render(state) {
   for (const [id, active] of [["listenInOff", !listenIn], ["listenInLeft", listenIn === "left"], ["listenInRight", listenIn === "right"]]) {
     $(id).classList.toggle("primary", active);
   }
-  $("listenInFragment").textContent = state.listenInToken ? "#listenToken=" + encodeURIComponent(state.listenInToken) : "(unavailable)";
   const otherAliases = (state.aliases || []).filter((value) => value.toLocaleUpperCase() !== state.groupCode.toLocaleUpperCase());
   $("aliases").textContent = otherAliases.length ? `Previous group code aliases: ${otherAliases.join(", ")}` : "";
   renderPreviews(state);
@@ -703,10 +702,6 @@ async function setListenIn(side) {
 $("listenInOff").addEventListener("click", () => setListenIn(false));
 $("listenInLeft").addEventListener("click", () => setListenIn("left"));
 $("listenInRight").addEventListener("click", () => setListenIn("right"));
-$("copyListenInFragment").addEventListener("click", async () => {
-  if (!session?.listenInToken) return;
-  await navigator.clipboard.writeText("#listenToken=" + encodeURIComponent(session.listenInToken));
-});
 
 $("manualSave").addEventListener("click", async () => {
   $("overrideError").textContent = "";
