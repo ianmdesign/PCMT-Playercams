@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from .admin_auth import AdminAuth
 from .storage import DATA_DIR, AppConfig, OverrideStore, SessionStore, normalize_group_code, normalize_riot_id, now_ms, stream_id_for_riot_id
 from .session_identity import SessionRiotIdStore
-from .spectra_roster import SpectraRosterWatcher
+from .spectra_roster import SpectraRosterWatcher, select_unambiguous_roster
 from .vdo import build_preview_url, build_publish_url
 
 
@@ -31,7 +31,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Trusted Spectra output rosters are transient. Unauthenticated browser-submitted
 # frontend_roster events are intentionally ignored.
-rosters: dict[str, dict[str, Any]] = {}
+rosters: dict[tuple[str, str], dict[str, Any]] = {}
 frontend_groups: dict[str, str] = {}
 frontend_sessions: dict[str, str | None] = {}
 
@@ -84,10 +84,7 @@ ROSTER_TTL_MS = 120_000
 
 
 def get_trusted_roster(group_code: str) -> dict[str, Any] | None:
-    roster = rosters.get(normalize_group_code(group_code))
-    if roster and now_ms() - int(roster.get("updatedAt", 0)) <= ROSTER_TTL_MS:
-        return roster
-    return None
+    return select_unambiguous_roster(rosters, group_code, now_ms(), ROSTER_TTL_MS)
 
 
 def get_latest_roster(session: dict[str, Any]) -> dict[str, Any] | None:
@@ -216,10 +213,18 @@ async def emit_state_to_all_frontends() -> None:
             pass
 
 
-async def receive_trusted_roster(group_code: str, teams: list[dict[str, Any]]) -> None:
+async def receive_trusted_roster(
+    endpoint: str, group_code: str, teams: list[dict[str, Any]]
+) -> None:
+    group_code = normalize_group_code(group_code)
     previous = get_trusted_roster(group_code)
-    rosters[group_code] = {"teams": teams, "updatedAt": now_ms()}
-    if previous is None or previous["teams"] != teams:
+    rosters[(endpoint, group_code)] = {
+        "teams": teams, "updatedAt": now_ms(), "spectraEndpoint": endpoint
+    }
+    current = get_trusted_roster(group_code)
+    if (previous is None) != (current is None) or (
+        previous is not None and current is not None and previous["teams"] != current["teams"]
+    ):
         await emit_state_to_all_frontends()
 
 
@@ -228,7 +233,9 @@ def roster_watch_needed(group_code: str) -> bool:
 
 
 roster_watcher = SpectraRosterWatcher(
-    config.spectra_output_endpoint, receive_trusted_roster, roster_watch_needed
+    config.spectra_output_endpoints or config.spectra_output_endpoint,
+    receive_trusted_roster,
+    roster_watch_needed,
 )
 
 

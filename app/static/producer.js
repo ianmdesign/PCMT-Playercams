@@ -322,14 +322,16 @@ function renderRoster(state) {
   if (!roster?.teams?.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = "Waiting for a PCMT Spectra frontend using this group code to report the current roster.";
+    empty.textContent = "Waiting for a verified Spectra roster. Check configured Spectra output endpoints; avoid using the same group code on multiple servers.";
     root.appendChild(empty);
     $("rosterUpdated").textContent = "";
     return;
   }
 
   lastRosterUpdated = roster.updatedAt;
-  $("rosterUpdated").textContent = roster.updatedAt ? `Updated ${new Date(roster.updatedAt).toLocaleTimeString()}` : "";
+  $("rosterUpdated").textContent = roster.updatedAt
+    ? `Updated ${new Date(roster.updatedAt).toLocaleTimeString()} · ${roster.spectraEndpoint || "Spectra"}`
+    : "";
 
   const wrap = document.createElement("div");
   wrap.className = "grid";
