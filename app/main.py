@@ -178,7 +178,7 @@ def build_frontend_state(group_code: str, session_override: dict[str, Any] | Non
             "enable": session["playercamsEnabled"],
             "listenIn": session["listenIn"],
             "identifier": session["roomId"],
-            "listenInRoom": f"{session['roomId']}-listenin",
+            "listenInRoom": f"{session['roomId']}_li",
             "audioStreamMappings": build_listen_in_state(session)["audioStreamMappings"],
             "enabledPlayers": [player["riotId"] for player in players],
             # Effective Riot ID -> actual live VDO stream ID. This lets a producer
