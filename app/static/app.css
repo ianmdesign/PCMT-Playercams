@@ -1058,3 +1058,31 @@ body.embed-mode {
 }
 .preview-controls { flex-wrap: wrap; justify-content: flex-end; }
 .player-row .mic-state { margin-top: 6px; }
+
+.listen-in-player-list {
+  display: grid;
+  gap: 6px;
+  max-height: 270px;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+.listen-in-player-row {
+  display: grid;
+  grid-template-columns: minmax(135px, 1.2fr) minmax(110px, .8fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255,255,255,.11);
+  border-radius: 7px;
+  background: rgba(24,26,35,.65);
+}
+.listen-in-player-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.listen-in-player-row .mic-state { justify-self: end; }
+@media (max-width: 620px) {
+  .listen-in-player-row { grid-template-columns: minmax(0,1fr) auto; }
+  .listen-in-player-row .meta { grid-row: 2; grid-column: 1 / -1; }
+}
