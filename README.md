@@ -18,6 +18,8 @@ The upstream Spectra Server stays unchanged. The PCMT frontend continues to rece
 - Player VDO.Ninja sessions are locked down: incoming room video is disabled, other players are not shown, the participant list/chat/header/settings/control buttons are hidden, and room-to-room video is disabled.
 - Publisher bandwidth is capped independently from preview quality. By default, a player can send at most 2500 kbps to any one direct viewer and 3000 kbps total across all outbound video connections.
 - The producer dashboard shows low-bandwidth, no-audio previews for active playercam pages without changing the full-quality feed requested by the broadcast overlay.
+- The producer dashboard now displays **microphone setup status** beside active video previews, beside each trusted roster player, and in an all-registered-players Listen-In status list. The preview summary counts how many active player pages have microphone setup enabled.
+- **Mic setup enabled does not guarantee live microphone publishing.** The backend knows whether a participant opted into the separate microphone setup and whether the player page heartbeat is fresh; it cannot yet verify VDO.Ninja device permission, internal mute, microphone level, or whether OBS is successfully receiving the WebRTC audio track. An inactive page is shown as offline even if its last saved mic preference remains enabled.
 - All players use the same join URL, enter their full `Riot Name#Tagline`, then choose:
   - **Share Video** -> VDO.Ninja camera flow (`webcam2`)
   - **Share Image / File** -> VDO.Ninja media-file flow (`fileshare`)

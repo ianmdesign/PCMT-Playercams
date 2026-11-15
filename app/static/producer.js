@@ -126,6 +126,66 @@ function playerPageIsActive(player) {
   return !!player?.lastSeen && (Date.now() - player.lastSeen) < 60000;
 }
 
+// The backend reports that the player opted into microphone setup. This does
+// not certify that VDO.Ninja obtained permission or established a live stream.
+function micState(player) {
+  if (!player) return { label: "Mic not joined", kind: "missing" };
+  if (!player.audioEnabled) return { label: "Mic off", kind: "off" };
+  return playerPageIsActive(player)
+    ? { label: "Mic setup enabled", kind: "enabled" }
+    : { label: "Mic enabled · page offline", kind: "offline" };
+}
+
+function makeMicBadge() {
+  const badge = document.createElement("span");
+  badge.className = "mic-state";
+  return badge;
+}
+
+function paintMicBadge(badge, player) {
+  const state = micState(player);
+  badge.textContent = state.label;
+  badge.dataset.micState = state.kind;
+  badge.title = state.kind === "enabled"
+    ? "Player has enabled the microphone setup pane. Actual VDO microphone publishing is not verified."
+    : state.kind === "offline"
+      ? "Microphone was enabled, but the player page is not currently active."
+      : state.kind === "off"
+        ? "Player has not enabled microphone sharing."
+        : "No active Playercams registration for this player.";
+}
+
+function renderListenInPlayerStatuses(state) {
+  const root = $("listenInPlayerStatus");
+  const scrollTop = root.scrollTop;
+  root.replaceChildren();
+  const players = state.players || [];
+  if (!players.length) {
+    const placeholder = document.createElement("p");
+    placeholder.className = "meta";
+    placeholder.textContent = "No players have registered in this session yet.";
+    root.appendChild(placeholder);
+    return;
+  }
+  for (const player of players) {
+    const row = document.createElement("div");
+    row.className = "listen-in-player-row";
+    const name = document.createElement("strong");
+    name.textContent = player.riotId;
+    name.title = player.riotId;
+    const detail = document.createElement("span");
+    detail.className = "meta";
+    detail.textContent = playerPageIsActive(player)
+      ? "Player page active"
+      : formatSeen(player.lastSeen);
+    const mic = makeMicBadge();
+    paintMicBadge(mic, player);
+    row.append(name, detail, mic);
+    root.appendChild(row);
+  }
+  root.scrollTop = scrollTop;
+}
+
 function previewKey(player) {
   return player.connectionNormalizedRiotId || player.normalizedRiotId;
 }
@@ -182,6 +242,7 @@ function makePreviewCard(player) {
 
   const mode = document.createElement("div");
   mode.className = "preview-mode";
+  const mic = makeMicBadge();
 
   const fixRiotId = document.createElement("button");
   fixRiotId.type = "button";
@@ -189,11 +250,11 @@ function makePreviewCard(player) {
   fixRiotId.textContent = "Fix Riot ID";
   fixRiotId.title = "Correct this player's Riot ID for this session";
 
-  controls.append(mode, fixRiotId);
+  controls.append(mode, mic, fixRiotId);
   info.append(name, controls);
   card.append(frameWrap, info);
 
-  return { card, frame, name, mode, fixRiotId, url: "" };
+  return { card, frame, name, mode, mic, fixRiotId, url: "" };
 }
 
 function renderPreviews(state) {
@@ -235,6 +296,7 @@ function renderPreviews(state) {
         ? `${playerOverride.displayName} · ${player.riotId}`
         : player.riotId;
       refs.mode.textContent = player.shareType === "media" ? "Media" : "Camera";
+      paintMicBadge(refs.mic, player);
       refs.fixRiotId.onclick = () => correctPlayerRiotId(player);
 
       if (player.previewUrl && refs.url !== player.previewUrl) {
@@ -247,12 +309,18 @@ function renderPreviews(state) {
   $("feedCount").textContent = String(activePlayers.length);
 
   const bitrate = Number(state.producerPreviewBitrateKbps || 0);
-  $("previewQuality").textContent = bitrate ? `${bitrate} kbps per preview · no audio` : "No audio";
+  $("previewQuality").textContent = bitrate
+    ? `${bitrate} kbps per preview · no preview audio`
+    : "Previews are always silent";
+  const micEnabledCount = activePlayers.filter(p => p.audioEnabled).length;
+  $("micSummary").textContent = `${micEnabledCount} of ${activePlayers.length} active player pages have Listen-In mic enabled`;
+
 }
 
 function makeOverrideRow(riotId, currentOverride, player) {
   const row = document.createElement("div");
   row.className = "player-row";
+  row.dataset.riotId = norm(riotId);
 
   const identity = document.createElement("div");
   const name = document.createElement("div");
@@ -267,6 +335,9 @@ function makeOverrideRow(riotId, currentOverride, player) {
     status.textContent = "No playercam registration";
   }
   identity.appendChild(status);
+  const mic = makeMicBadge();
+  paintMicBadge(mic, player);
+  identity.appendChild(mic);
 
   const input = document.createElement("input");
   const draftKey = norm(riotId);
@@ -394,6 +465,16 @@ function renderOverrides(state) {
   }
 }
 
+function refreshRosterMicBadges(state) {
+  // Keep status fresh even while an operator edits a name override. Rebuilding
+  // those input rows during typing would discard the in-progress text.
+  const players = connectedPlayerMap(state.players);
+  for (const row of document.querySelectorAll("#roster .player-row, #savedOverrides .player-row")) {
+    const badge = row.querySelector(".mic-state");
+    if (badge) paintMicBadge(badge, players.get(row.dataset.riotId));
+  }
+}
+
 function isOverrideInputFocused() {
   const active = document.activeElement;
   if (!active || active.tagName !== "INPUT") return false;
@@ -420,10 +501,12 @@ function render(state) {
   const otherAliases = (state.aliases || []).filter((value) => value.toLocaleUpperCase() !== state.groupCode.toLocaleUpperCase());
   $("aliases").textContent = otherAliases.length ? `Previous group code aliases: ${otherAliases.join(", ")}` : "";
   renderPreviews(state);
+  renderListenInPlayerStatuses(state);
   if (!isOverrideInputFocused()) {
     renderRoster(state);
     renderOverrides(state);
   }
+  refreshRosterMicBadges(state);
 }
 
 function showDashboardError(message = "") { $("dashboardError").textContent = message; }

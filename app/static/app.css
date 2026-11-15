@@ -1029,3 +1029,60 @@ body.embed-mode {
   .mic-setup-frame { min-height: 240px; }
 }
 
+
+/* Admin mic badges: the backend confirms opt-in, not VDO mic capture. */
+.mic-state {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  max-width: 100%;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.15);
+  padding: 3px 8px;
+  font-size: 10px;
+  line-height: 1.35;
+  font-weight: 750;
+  white-space: nowrap;
+  color: rgba(255,255,255,.7);
+  background: rgba(255,255,255,.08);
+}
+.mic-state[data-mic-state="enabled"] {
+  color: #a8f4ca;
+  background: rgba(36,114,76,.3);
+  border-color: rgba(67,222,139,.4);
+}
+.mic-state[data-mic-state="offline"] {
+  color: #f1d6a0;
+  background: rgba(111,77,24,.3);
+  border-color: rgba(255,200,96,.35);
+}
+.preview-controls { flex-wrap: wrap; justify-content: flex-end; }
+.player-row .mic-state { margin-top: 6px; }
+
+.listen-in-player-list {
+  display: grid;
+  gap: 6px;
+  max-height: 270px;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+.listen-in-player-row {
+  display: grid;
+  grid-template-columns: minmax(135px, 1.2fr) minmax(110px, .8fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255,255,255,.11);
+  border-radius: 7px;
+  background: rgba(24,26,35,.65);
+}
+.listen-in-player-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.listen-in-player-row .mic-state { justify-self: end; }
+@media (max-width: 620px) {
+  .listen-in-player-row { grid-template-columns: minmax(0,1fr) auto; }
+  .listen-in-player-row .meta { grid-row: 2; grid-column: 1 / -1; }
+}

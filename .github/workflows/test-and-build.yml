@@ -51,5 +51,10 @@ jobs:
           print("Configuration is valid.")
           PY
 
+      - name: Check producer and participant JavaScript syntax
+        run: |
+          node --check app/static/producer.js
+          node --check app/static/join.js
+
       - name: Build Docker image
         run: docker build -t pcmt-playercams-ci .
