@@ -23,6 +23,9 @@
 
         <div class="start-card stack">
           <h1 id="startTitle">Welcome to PCMT Playercams</h1>
+          <label id="spectraServerLabel">Spectra Server
+            <select id="spectraServer" aria-label="Spectra server"></select>
+          </label>
           <label id="groupCodeLabel">Spectra Group Code
             <input id="groupCode" autocomplete="off" placeholder="Enter group code" />
           </label>
@@ -80,6 +83,15 @@
           </div>
 
           <div class="divider"></div>
+
+          <div>
+            <div class="meta">Spectra server (pinned for this session)</div>
+            <div id="currentSpectraServer" class="code"></div>
+            <div class="row" style="margin-top:8px">
+              <select id="legacySpectraServer" class="hidden" aria-label="Assign a Spectra server to the legacy session"></select>
+              <button id="assignSpectraServer" class="btn hidden" type="button">Assign Legacy Server</button>
+            </div>
+          </div>
 
           <label>Current Spectra Group Code
             <div class="row">
