@@ -126,6 +126,35 @@ function playerPageIsActive(player) {
   return !!player?.lastSeen && (Date.now() - player.lastSeen) < 60000;
 }
 
+// The backend reports that the player opted into microphone setup. This does
+// not certify that VDO.Ninja obtained permission or established a live stream.
+function micState(player) {
+  if (!player) return { label: "Mic not joined", kind: "missing" };
+  if (!player.audioEnabled) return { label: "Mic off", kind: "off" };
+  return playerPageIsActive(player)
+    ? { label: "Mic enabled", kind: "enabled" }
+    : { label: "Mic enabled · offline", kind: "offline" };
+}
+
+function makeMicBadge() {
+  const badge = document.createElement("span");
+  badge.className = "mic-state";
+  return badge;
+}
+
+function paintMicBadge(badge, player) {
+  const state = micState(player);
+  badge.textContent = state.label;
+  badge.dataset.micState = state.kind;
+  badge.title = state.kind === "enabled"
+    ? "Player has enabled the microphone setup pane. Actual VDO microphone publishing is not verified."
+    : state.kind === "offline"
+      ? "Microphone was enabled, but the player page is not currently active."
+      : state.kind === "off"
+        ? "Player has not enabled microphone sharing."
+        : "No active Playercams registration for this player.";
+}
+
 function previewKey(player) {
   return player.connectionNormalizedRiotId || player.normalizedRiotId;
 }
@@ -182,6 +211,7 @@ function makePreviewCard(player) {
 
   const mode = document.createElement("div");
   mode.className = "preview-mode";
+  const mic = makeMicBadge();
 
   const fixRiotId = document.createElement("button");
   fixRiotId.type = "button";
@@ -189,11 +219,11 @@ function makePreviewCard(player) {
   fixRiotId.textContent = "Fix Riot ID";
   fixRiotId.title = "Correct this player's Riot ID for this session";
 
-  controls.append(mode, fixRiotId);
+  controls.append(mode, mic, fixRiotId);
   info.append(name, controls);
   card.append(frameWrap, info);
 
-  return { card, frame, name, mode, fixRiotId, url: "" };
+  return { card, frame, name, mode, mic, fixRiotId, url: "" };
 }
 
 function renderPreviews(state) {
@@ -235,6 +265,7 @@ function renderPreviews(state) {
         ? `${playerOverride.displayName} · ${player.riotId}`
         : player.riotId;
       refs.mode.textContent = player.shareType === "media" ? "Media" : "Camera";
+      paintMicBadge(refs.mic, player);
       refs.fixRiotId.onclick = () => correctPlayerRiotId(player);
 
       if (player.previewUrl && refs.url !== player.previewUrl) {
@@ -247,7 +278,12 @@ function renderPreviews(state) {
   $("feedCount").textContent = String(activePlayers.length);
 
   const bitrate = Number(state.producerPreviewBitrateKbps || 0);
-  $("previewQuality").textContent = bitrate ? `${bitrate} kbps per preview · no audio` : "No audio";
+  $("previewQuality").textContent = bitrate
+    ? `${bitrate} kbps per preview · no preview audio`
+    : "Previews are always silent";
+  const micEnabledCount = activePlayers.filter(p => p.audioEnabled).length;
+  $("micSummary").textContent = `${micEnabledCount} of ${activePlayers.length} active player pages have Listen-In mic enabled`;
+
 }
 
 function makeOverrideRow(riotId, currentOverride, player) {
@@ -267,6 +303,9 @@ function makeOverrideRow(riotId, currentOverride, player) {
     status.textContent = "No playercam registration";
   }
   identity.appendChild(status);
+  const mic = makeMicBadge();
+  paintMicBadge(mic, player);
+  identity.appendChild(mic);
 
   const input = document.createElement("input");
   const draftKey = norm(riotId);
