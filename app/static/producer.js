@@ -157,6 +157,7 @@ function paintMicBadge(badge, player) {
 
 function renderListenInPlayerStatuses(state) {
   const root = $("listenInPlayerStatus");
+  const scrollTop = root.scrollTop;
   root.replaceChildren();
   const players = state.players || [];
   if (!players.length) {
@@ -182,6 +183,7 @@ function renderListenInPlayerStatuses(state) {
     row.append(name, detail, mic);
     root.appendChild(row);
   }
+  root.scrollTop = scrollTop;
 }
 
 function previewKey(player) {
@@ -318,6 +320,7 @@ function renderPreviews(state) {
 function makeOverrideRow(riotId, currentOverride, player) {
   const row = document.createElement("div");
   row.className = "player-row";
+  row.dataset.riotId = norm(riotId);
 
   const identity = document.createElement("div");
   const name = document.createElement("div");
@@ -462,6 +465,16 @@ function renderOverrides(state) {
   }
 }
 
+function refreshRosterMicBadges(state) {
+  // Keep status fresh even while an operator edits a name override. Rebuilding
+  // those input rows during typing would discard the in-progress text.
+  const players = connectedPlayerMap(state.players);
+  for (const row of document.querySelectorAll("#roster .player-row, #savedOverrides .player-row")) {
+    const badge = row.querySelector(".mic-state");
+    if (badge) paintMicBadge(badge, players.get(row.dataset.riotId));
+  }
+}
+
 function isOverrideInputFocused() {
   const active = document.activeElement;
   if (!active || active.tagName !== "INPUT") return false;
@@ -493,6 +506,7 @@ function render(state) {
     renderRoster(state);
     renderOverrides(state);
   }
+  refreshRosterMicBadges(state);
 }
 
 function showDashboardError(message = "") { $("dashboardError").textContent = message; }
