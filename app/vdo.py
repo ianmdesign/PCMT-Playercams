@@ -114,11 +114,9 @@ def build_audio_publish_url(room_id: str, riot_id: str, audio_stream_id: str) ->
         "roombitrate=0",
         "showlist=0",
         "chatbutton=0",
-        "cleanoutput",
-        "noheader",
-        "hidehome",
-        "nosettings",
+        # Unlike the locked-down visual publisher, this must expose VDO's
+        # native microphone setup and device picker to the participant.
+        # In particular, do NOT add cleanoutput, nosettings, or nomicbutton.
         "nospeakerbutton",
         "novideobutton",
-        "disablehotkeys",
     ])
