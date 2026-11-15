@@ -55,6 +55,16 @@ def stream_id_for_riot_id(riot_id: str) -> str:
     return f"{name}_H_{tagline}"
 
 
+def audio_stream_id_for_player(session: dict[str, Any], connection_riot_id: str) -> str:
+    """Session-scoped opaque audio stream; never publish IDs in public HUD state."""
+    digest = hmac.new(
+        session["listenInToken"].encode("utf-8"),
+        normalize_riot_id(validate_riot_id(connection_riot_id)).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"pcmtmic_{digest[:40]}"
+
+
 def parse_spectra_output_endpoints(raw: dict[str, Any]) -> tuple[str, ...]:
     """Load a trusted endpoint allowlist; legacy single-URL configs still work."""
     if "spectraOutputEndpoints" in raw:
@@ -228,7 +238,9 @@ class SessionStore:
                     created_at INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL,
                     active INTEGER NOT NULL DEFAULT 1,
-                    playercams_enabled INTEGER NOT NULL DEFAULT 1
+                    playercams_enabled INTEGER NOT NULL DEFAULT 1,
+                    listen_in TEXT NOT NULL DEFAULT 'off',
+                    listen_in_view_token TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS group_aliases (
@@ -246,6 +258,7 @@ class SessionStore:
                     share_type TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
                     last_seen INTEGER NOT NULL,
+                    audio_enabled INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (session_id, riot_norm),
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
                 );
@@ -254,6 +267,18 @@ class SessionStore:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
             if "producer_token_hash" not in columns:
                 conn.execute("ALTER TABLE sessions ADD COLUMN producer_token_hash TEXT")
+            if "listen_in" not in columns:
+                conn.execute("ALTER TABLE sessions ADD COLUMN listen_in TEXT NOT NULL DEFAULT 'off'")
+            if "listen_in_view_token" not in columns:
+                conn.execute("ALTER TABLE sessions ADD COLUMN listen_in_view_token TEXT")
+            player_columns = {row["name"] for row in conn.execute("PRAGMA table_info(players)")}
+            if "audio_enabled" not in player_columns:
+                conn.execute("ALTER TABLE players ADD COLUMN audio_enabled INTEGER NOT NULL DEFAULT 0")
+            for row in conn.execute("SELECT session_id FROM sessions WHERE listen_in_view_token IS NULL OR listen_in_view_token = ''"):
+                conn.execute(
+                    "UPDATE sessions SET listen_in_view_token = ? WHERE session_id = ?",
+                    (secrets.token_urlsafe(32), row["session_id"]),
+                )
             # Sessions created by pre-capability-link development builds have no
             # recoverable producer secret. Retire them rather than leave an
             # unauthenticated or permanently stuck producer session active.
@@ -285,6 +310,9 @@ class SessionStore:
             "expiresAt": row["expires_at"],
             "active": bool(row["active"]),
             "playercamsEnabled": bool(row["playercams_enabled"]),
+            "listenIn": row["listen_in"] if bool(row["playercams_enabled"]) and row["listen_in"] in ("left", "right") else False,
+            # Private: only returned through token-protected producer session APIs.
+            "listenInToken": row["listen_in_view_token"],
         }
 
     def _is_live(self, row: sqlite3.Row | None, at: int | None = None) -> bool:
@@ -351,6 +379,7 @@ class SessionStore:
         join_token = secrets.token_urlsafe(32)
         producer_token = self._generate_producer_token()
         producer_token_hash = hash_token(producer_token)
+        listen_in_view_token = secrets.token_urlsafe(32)
 
         with self._connect() as conn:
             stale = conn.execute(
@@ -371,10 +400,10 @@ class SessionStore:
                 """
                 INSERT INTO sessions (
                     session_id, room_id, join_token, producer_token_hash, current_group_code,
-                    created_at, expires_at, active, playercams_enabled
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)
+                    created_at, expires_at, active, playercams_enabled, listen_in_view_token
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
                 """,
-                (session_id, room_id, join_token, producer_token_hash, group_code, created, expires),
+                (session_id, room_id, join_token, producer_token_hash, group_code, created, expires, listen_in_view_token),
             )
             conn.execute(
                 "INSERT INTO group_aliases (group_code, session_id, created_at, resolve_until) VALUES (?, ?, ?, NULL)",
@@ -466,8 +495,23 @@ class SessionStore:
             raise ValueError("Playercam session is not active")
         with self._connect() as conn:
             conn.execute(
-                "UPDATE sessions SET playercams_enabled = ? WHERE session_id = ?",
-                (1 if enabled else 0, session_id),
+                "UPDATE sessions SET playercams_enabled = ?, listen_in = CASE WHEN ? = 1 THEN listen_in ELSE 'off' END WHERE session_id = ?",
+                (1 if enabled else 0, 1 if enabled else 0, session_id),
+            )
+        return self.get_session(session_id) or {}
+
+    def set_listen_in(self, session_id: str, side: str | bool) -> dict[str, Any]:
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Playercam session is not active")
+        if side not in (False, "left", "right"):
+            raise ValueError("Listen-In must be false, left or right")
+        if side and not session["playercamsEnabled"]:
+            raise ValueError("Playercams must be enabled to start Listen-In")
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE sessions SET listen_in = ? WHERE session_id = ?",
+                (side if side else "off", session_id),
             )
         return self.get_session(session_id) or {}
 
@@ -475,7 +519,7 @@ class SessionStore:
         with self._connect() as conn:
             conn.execute("UPDATE sessions SET active = 0 WHERE session_id = ?", (session_id,))
 
-    def register_player(self, token: str, riot_id: str, share_type: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    def register_player(self, token: str, riot_id: str, share_type: str, audio_enabled: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
         session = self.get_session_by_token(token)
         if not session:
             raise ValueError("Playercam session is not active")
@@ -488,22 +532,37 @@ class SessionStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO players (session_id, riot_norm, riot_id, share_type, created_at, last_seen)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO players (session_id, riot_norm, riot_id, share_type, created_at, last_seen, audio_enabled)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id, riot_norm) DO UPDATE SET
                   riot_id = excluded.riot_id,
                   share_type = excluded.share_type,
-                  last_seen = excluded.last_seen
+                  last_seen = excluded.last_seen,
+                  audio_enabled = excluded.audio_enabled
                 """,
-                (session["sessionId"], norm, riot_id, share_type, at, at),
+                (session["sessionId"], norm, riot_id, share_type, at, at, 1 if audio_enabled else 0),
             )
         player = {
             "riotId": riot_id,
             "normalizedRiotId": norm,
             "shareType": share_type,
+            "audioEnabled": bool(audio_enabled),
             "lastSeen": at,
         }
         return session, player
+
+    def set_audio_enabled(self, token: str, riot_id: str, enabled: bool) -> None:
+        session = self.get_session_by_token(token)
+        if not session:
+            raise ValueError("Playercam session is not active")
+        norm = normalize_riot_id(validate_riot_id(riot_id))
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE players SET audio_enabled = ? WHERE session_id = ? AND riot_norm = ?",
+                (1 if enabled else 0, session["sessionId"], norm),
+            )
+        if cursor.rowcount != 1:
+            raise ValueError("Player is not registered")
 
     def heartbeat_player(self, token: str, riot_id: str) -> None:
         session = self.get_session_by_token(token)
@@ -519,7 +578,7 @@ class SessionStore:
     def list_players(self, session_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT riot_id, riot_norm, share_type, created_at, last_seen FROM players WHERE session_id = ? ORDER BY created_at",
+                "SELECT riot_id, riot_norm, share_type, audio_enabled, created_at, last_seen FROM players WHERE session_id = ? ORDER BY created_at",
                 (session_id,),
             ).fetchall()
         return [
@@ -527,6 +586,7 @@ class SessionStore:
                 "riotId": row["riot_id"],
                 "normalizedRiotId": row["riot_norm"],
                 "shareType": row["share_type"],
+                "audioEnabled": bool(row["audio_enabled"]),
                 "createdAt": row["created_at"],
                 "lastSeen": row["last_seen"],
             }
