@@ -29,6 +29,11 @@
           <span>Open VDO.Ninja's media-file sharing flow.</span>
         </button>
       </div>
+      <label class="mic-optin">
+        <input id="shareMic" type="checkbox" />
+        <span>Share my microphone with production for Listen-In (optional). I can stop sharing at any time.</span>
+      </label>
+      <p class="join-hint">Microphone audio is one-way to production. You will not receive any player audio through PCMT.</p>
       <div id="joinError" class="error"></div>
     </section>
   </main>
@@ -37,9 +42,15 @@
     <div class="embed-stage">
       <div class="embed-toolbar">
         <div id="embedIdentity" class="embed-player-identity"></div>
+        <button id="toggleMic" class="btn ghost" type="button">Enable microphone</button>
         <button id="backButton" class="btn ghost">Back</button>
       </div>
       <iframe id="vdoFrame" class="vdo-frame" allow="camera *; autoplay *; fullscreen *"></iframe>
+      <div id="micPanel" class="mic-publisher-panel" aria-live="polite">
+        <strong>Microphone uplink</strong>
+        <span id="micStatus">Microphone off. No audio sent to production.</span>
+        <iframe id="micFrame" title="One-way microphone uplink" allow="microphone *; autoplay *" referrerpolicy="no-referrer"></iframe>
+      </div>
     </div>
   </main>
 

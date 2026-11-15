@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from app.storage import AppConfig, OverrideStore, SessionStore, stream_id_for_riot_id
+from app.storage import AppConfig, OverrideStore, SessionStore, stream_id_for_riot_id, audio_stream_id_for_player
 
 
 class SessionStoreTests(unittest.TestCase):
@@ -124,6 +124,38 @@ class SessionStoreTests(unittest.TestCase):
         players = self.store.list_players(session["sessionId"])
         self.assertEqual(1, len(players))
         self.assertEqual("media", players[0]["shareType"])
+
+
+    def test_listen_in_defaults_off_and_requires_playercams(self):
+        session, _, _ = self.store.create_or_reuse("AUDIO1")
+        self.assertIs(session["listenIn"], False)
+        self.assertGreater(len(session["listenInToken"]), 32)
+        enabled = self.store.set_listen_in(session["sessionId"], "left")
+        self.assertEqual("left", enabled["listenIn"])
+        self.assertIs(self.store.set_listen_in(session["sessionId"], False)["listenIn"], False)
+        self.store.set_playercams_enabled(session["sessionId"], False)
+        with self.assertRaises(ValueError):
+            self.store.set_listen_in(session["sessionId"], "right")
+        with self.assertRaises(ValueError):
+            self.store.set_listen_in(session["sessionId"], "invalid")
+
+    def test_audio_opt_in_and_per_session_stream_ids(self):
+        first, _, _ = self.store.create_or_reuse("MIC1")
+        second, _, _ = self.store.create_or_reuse("MIC2")
+        _, player = self.store.register_player(first["joinToken"], "Player#NA1", "media")
+        self.assertFalse(player["audioEnabled"])
+        self.store.set_audio_enabled(first["joinToken"], "Player#NA1", True)
+        self.assertTrue(self.store.list_players(first["sessionId"])[0]["audioEnabled"])
+        self.assertNotEqual(
+            audio_stream_id_for_player(first, "Player#NA1"),
+            audio_stream_id_for_player(second, "Player#NA1"),
+        )
+        self.assertEqual(
+            audio_stream_id_for_player(first, "Player#NA1"),
+            audio_stream_id_for_player(first, "PLAYER#na1"),
+        )
+        self.store.set_audio_enabled(first["joinToken"], "Player#NA1", False)
+        self.assertFalse(self.store.list_players(first["sessionId"])[0]["audioEnabled"])
 
 
 class OverrideStoreTests(unittest.TestCase):

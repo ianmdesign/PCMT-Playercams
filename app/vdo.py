@@ -93,3 +93,32 @@ def build_preview_url(room_id: str, riot_id: str, bitrate_kbps: int = 800) -> tu
         _flag("disablehotkeys"),
     ]
     return "https://vdo.ninja/?" + "&".join(parts), stream_id
+
+
+def build_audio_publish_url(room_id: str, riot_id: str, audio_stream_id: str) -> str:
+    """Separate microphone-only publisher. Never create incoming guest media.
+
+    The visual stream ID and the existing camera URL are unchanged. The caller
+    must only embed this URL after the participant explicitly enables their mic.
+    """
+    from urllib.parse import quote
+
+    return "https://vdo.ninja/?" + "&".join([
+        # Deliberately no room= parameter: mic only supports direct view
+        # requests and cannot discover or receive room guests.
+        f"push={quote(audio_stream_id, safe='')}",
+        f"label={quote(riot_id + ' microphone', safe='')}",
+        "miconly",
+        "deafen",
+        "novideo",
+        "roombitrate=0",
+        "showlist=0",
+        "chatbutton=0",
+        "cleanoutput",
+        "noheader",
+        "hidehome",
+        "nosettings",
+        "nospeakerbutton",
+        "novideobutton",
+        "disablehotkeys",
+    ])

@@ -411,6 +411,12 @@ function render(state) {
     currentGroupInput.value = state.groupCode;
   }
   $("camsEnabled").checked = !!state.playercamsEnabled;
+  const listenIn = state.listenIn || false;
+  $("listenInStatus").textContent = listenIn === "left" ? "Left team" : listenIn === "right" ? "Right team" : "Off";
+  for (const [id, active] of [["listenInOff", !listenIn], ["listenInLeft", listenIn === "left"], ["listenInRight", listenIn === "right"]]) {
+    $(id).classList.toggle("primary", active);
+  }
+  $("listenInFragment").textContent = state.listenInToken ? "#listenToken=" + encodeURIComponent(state.listenInToken) : "(unavailable)";
   const otherAliases = (state.aliases || []).filter((value) => value.toLocaleUpperCase() !== state.groupCode.toLocaleUpperCase());
   $("aliases").textContent = otherAliases.length ? `Previous group code aliases: ${otherAliases.join(", ")}` : "";
   renderPreviews(state);
@@ -596,6 +602,27 @@ $("camsEnabled").addEventListener("change", async () => {
     $("camsEnabled").checked = !$("camsEnabled").checked;
     showDashboardError(error.message);
   }
+});
+
+async function setListenIn(side) {
+  if (!session) return;
+  try {
+    const state = await api(`/api/producer/session/${encodeURIComponent(session.sessionId)}/listen-in`, {
+      method: "PUT",
+      body: JSON.stringify({ listenIn: side }),
+    });
+    render(state);
+    showDashboardError("");
+  } catch (error) {
+    showDashboardError(error.message);
+  }
+}
+$("listenInOff").addEventListener("click", () => setListenIn(false));
+$("listenInLeft").addEventListener("click", () => setListenIn("left"));
+$("listenInRight").addEventListener("click", () => setListenIn("right"));
+$("copyListenInFragment").addEventListener("click", async () => {
+  if (!session?.listenInToken) return;
+  await navigator.clipboard.writeText("#listenToken=" + encodeURIComponent(session.listenInToken));
 });
 
 $("manualSave").addEventListener("click", async () => {
