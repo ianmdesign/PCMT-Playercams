@@ -60,6 +60,7 @@ class VdoUrlTests(unittest.TestCase):
         self.assertIn("push=pcmtmic_randomstream", url)
         self.assertIn("&miconly", url)
         self.assertIn("&deafen", url)
+        self.assertIn("&directoronly", url)
         self.assertIn("&novideo", url)
         self.assertIn("roombitrate=0", url)
         self.assertNotIn("&noaudio", url)
