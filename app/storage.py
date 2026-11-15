@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", Path(__file__).resolve().parent.parent / "config"))
@@ -54,10 +55,51 @@ def stream_id_for_riot_id(riot_id: str) -> str:
     return f"{name}_H_{tagline}"
 
 
+def parse_spectra_output_endpoints(raw: dict[str, Any]) -> tuple[str, ...]:
+    """Load a trusted endpoint allowlist; legacy single-URL configs still work."""
+    if "spectraOutputEndpoints" in raw:
+        candidates = raw["spectraOutputEndpoints"]
+        if not isinstance(candidates, list):
+            raise ValueError("spectraOutputEndpoints must be an array of trusted URLs")
+    else:
+        candidates = [raw.get("spectraOutputEndpoint", "")]
+    if len(candidates) > 8:
+        raise ValueError("A maximum of eight Spectra output endpoints is supported")
+    endpoints: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not isinstance(candidate, str):
+            raise ValueError("Each Spectra output endpoint must be a URL string")
+        endpoint = candidate.strip().rstrip("/")
+        if not endpoint:
+            continue
+        try:
+            url = urlsplit(endpoint)
+            valid = (
+                url.scheme.lower() in ("http", "https")
+                and bool(url.hostname)
+                and url.port is not None
+                and not url.username
+                and not url.password
+                and not url.path
+                and not url.query
+                and not url.fragment
+            )
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("Spectra output endpoints must be HTTP(S) host:port URLs")
+        canonical = endpoint.lower()
+        if canonical not in seen:
+            seen.add(canonical)
+            endpoints.append(endpoint)
+    return tuple(endpoints)
+
 @dataclass(frozen=True)
 class AppConfig:
     public_base_url: str = "http://localhost:5400"
-    spectra_output_endpoint: str = ""
+    spectra_output_endpoint: str = ""  # Legacy direct-construction field.
+    spectra_output_endpoints: tuple[str, ...] = ()
     group_alias_grace_minutes: int = 30
     room_prefix: str = "pcmtplayercams"
     room_random_digits: int = 12
@@ -73,7 +115,11 @@ class AppConfig:
         raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         return cls(
             public_base_url=str(raw.get("publicBaseUrl", cls.public_base_url)).rstrip("/"),
-            spectra_output_endpoint=str(raw.get("spectraOutputEndpoint", cls.spectra_output_endpoint)).strip().rstrip("/"),
+            spectra_output_endpoint=(
+                "" if "spectraOutputEndpoints" in raw
+                else str(raw.get("spectraOutputEndpoint", cls.spectra_output_endpoint)).strip().rstrip("/")
+            ),
+            spectra_output_endpoints=parse_spectra_output_endpoints(raw),
             group_alias_grace_minutes=max(
                 0, int(raw.get("groupAliasGraceMinutes", cls.group_alias_grace_minutes))
             ),
