@@ -925,10 +925,107 @@ body.embed-mode {
   color: #fff;
 }
 
-/* Optional isolated microphone uplink (never any PCMT return audio). */
+/* Separate, interactive visual and microphone setup. Player microphones are
+   direct push-only VDO.Ninja feeds: the page never renders a return-audio viewer. */
 .mic-optin { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; margin: 14px 0 8px; }
 .mic-optin input { width: 18px; height: 18px; min-height: 18px; flex: 0 0 auto; }
-.mic-publisher-panel { position: absolute; right: 14px; bottom: 14px; z-index: 5; display: flex; flex-direction: column; gap: 3px; max-width: 320px; padding: 9px 12px; border-radius: 8px; background: rgba(8,15,25,.9); font-size: 12px; pointer-events: none; }
-.mic-publisher-panel span { color: rgba(255,255,255,.75); }
-.mic-publisher-panel iframe { width: 1px; height: 1px; opacity: 0; border: 0; pointer-events: none; }
 .embed-toolbar #toggleMic { margin-left: auto; }
+.embed-stage {
+  display: flex;
+  flex-direction: column;
+  width: min(1480px, calc(100vw - 84px));
+  height: min(760px, calc(100vh - 170px));
+  background: #141821;
+}
+.embed-toolbar {
+  position: relative;
+  inset: auto;
+  flex: 0 0 auto;
+  min-height: 56px;
+  padding: 12px;
+  align-items: center;
+  background: #141821;
+}
+.publisher-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr);
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 12px 12px;
+}
+.visual-publisher-pane, .mic-publisher-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.13);
+  border-radius: 10px;
+  background: #e9ebef;
+}
+.publisher-pane-heading {
+  flex: 0 0 auto;
+  padding: 9px 12px;
+  color: #eef3fb;
+  background: #212633;
+  font-size: 13px;
+  font-weight: 800;
+}
+.visual-publisher-pane .vdo-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.mic-publisher-pane {
+  background: #f0f2f5;
+  color: #161b25;
+}
+.mic-description {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  margin: 0;
+  color: #3f4959;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.mic-setup-frame {
+  display: block;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 290px;
+  border: 0;
+  background: #e9ebef;
+}
+.mic-off-placeholder {
+  display: grid;
+  place-content: center;
+  flex: 1 1 auto;
+  padding: 24px;
+  text-align: center;
+  color: #3f4959;
+  line-height: 1.55;
+}
+.mic-status {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  min-height: 44px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #283c30;
+  background: #e0ebdf;
+}
+@media (max-width: 900px) {
+  .embed-stage {
+    width: 100%;
+    height: calc(100vh - 96px);
+    overflow: auto;
+  }
+  .publisher-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(320px, 1fr) minmax(320px, 1fr);
+    overflow: auto;
+  }
+  .visual-publisher-pane, .mic-publisher-pane { min-height: 320px; }
+  .mic-setup-frame { min-height: 240px; }
+}
+
