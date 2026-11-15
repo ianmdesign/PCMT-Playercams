@@ -12,7 +12,7 @@ The upstream Spectra Server stays unchanged. The PCMT frontend continues to rece
 - The producer dashboard can rotate its Producer URL at any time; rotating immediately invalidates the previous producer token without changing the VDO room, player join link, registrations, or Spectra binding.
 - One separate random player join token is generated for the session.
 - VDO room IDs use `pcmtplayercams` followed immediately by 12 randomized digits by default.
-- Playercam visual calls remain video-only (`audiodevice=0`); an **independent, optional, direct audio-only VDO.Ninja feed** lets participants share a mic with production. The mic feed uses `deafen` and does not join the shared visual room.
+- Playercam visual calls remain video-only (`audiodevice=0`); an **independent, optional VDO.Ninja microphone feed** is published to `<visual-room-id>-listenin` with `deafen`, `novideo`, and `roombitrate=0`. The separate mic room is not an access-control boundary.
 - On the player join page the video/image publisher and an interactive microphone setup iframe appear in separate panels. Players can choose their microphone and start sharing through VDO.Ninja's native interface; the PCMT toggle stops their microphone separately, without stopping the visual feed.
 - Microphone access is explicitly opt-in, and no participant-to-participant audio playback or room receiver is provided by PCMT.
 - Player VDO.Ninja sessions are locked down: incoming room video is disabled, other players are not shown, the participant list/chat/header/settings/control buttons are hidden, and room-to-room video is disabled.
@@ -200,3 +200,5 @@ docker compose up -d --build
 You can override the published image with the `PCMT_PLAYERCAMS_IMAGE` environment variable.
 
 The `config` volume intentionally remains writable because `config/name-overrides.json` is part of the persistent service state. The SQLite session database is stored under `data/`.
+
+- Listen-In Left / Right / Off delivers only opted-in selected-team microphone stream mappings via normal `pcmt_tools_data` to the primary Spectra HUD; no listener token is needed. **Anyone with these mappings could potentially access audio, so keep session and HUD data private.**

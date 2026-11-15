@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import hmac
 from typing import Any
 
 import socketio
@@ -35,8 +34,6 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 rosters: dict[tuple[str, str], dict[str, Any]] = {}
 frontend_groups: dict[str, str] = {}
 frontend_sessions: dict[str, str | None] = {}
-# Only listener browsers with a session-scoped read-only secret receive audio IDs.
-listen_in_subscribers: dict[str, tuple[str, str]] = {}
 
 
 class SessionRequest(BaseModel):
@@ -166,9 +163,6 @@ def build_producer_state(session: dict[str, Any]) -> dict[str, Any]:
         "producerPreviewBitrateKbps": config.producer_preview_bitrate_kbps,
         "nameOverrides": overrides.list_entries(),
         "roster": get_latest_roster(session),
-        # This is a read-only listener capability; keep it off normal browser
-        # sources and never expose it in pcmt_tools_data.
-        "listenInToken": session["listenInToken"],
     }
 
 
@@ -184,6 +178,8 @@ def build_frontend_state(group_code: str, session_override: dict[str, Any] | Non
             "enable": session["playercamsEnabled"],
             "listenIn": session["listenIn"],
             "identifier": session["roomId"],
+            "listenInRoom": f"{session['roomId']}-listenin",
+            "audioStreamMappings": build_listen_in_state(session)["audioStreamMappings"],
             "enabledPlayers": [player["riotId"] for player in players],
             # Effective Riot ID -> actual live VDO stream ID. This lets a producer
             # correct a mistyped Riot ID without asking the player to reconnect.
@@ -248,13 +244,6 @@ async def emit_state_to_all_frontends() -> None:
         except Exception:
             # A disconnect event will clean the normal path.
             pass
-    for sid, (group_code, session_id) in list(listen_in_subscribers.items()):
-        session = sessions.resolve_group(group_code)
-        if not session or session["sessionId"] != session_id:
-            listen_in_subscribers.pop(sid, None)
-            await sio.emit("pcmt_listen_in_data", {"listenIn": False, "audioStreamMappings": {}}, to=sid)
-            continue
-        await sio.emit("pcmt_listen_in_data", build_listen_in_state(session), to=sid)
 
 
 async def receive_trusted_roster(
@@ -604,7 +593,6 @@ async def connect(sid: str, environ: dict[str, Any], auth: Any = None) -> None:
 async def disconnect(sid: str) -> None:
     frontend_groups.pop(sid, None)
     frontend_sessions.pop(sid, None)
-    listen_in_subscribers.pop(sid, None)
 
 
 @sio.on("frontend_logon")
@@ -619,22 +607,6 @@ async def frontend_logon(sid: str, data: Any) -> None:
     frontend_sessions[sid] = resolved["sessionId"] if resolved else None
     roster_watcher.ensure_watch(group_code)
     await sio.emit("pcmt_tools_data", build_frontend_state(group_code, resolved), to=sid)
-
-
-@sio.on("listen_in_logon")
-async def listen_in_logon(sid: str, data: Any) -> None:
-    listen_in_subscribers.pop(sid, None)
-    if not isinstance(data, dict):
-        return
-    group_code = normalize_group_code(str(data.get("groupCode", "")))
-    token = data.get("token")
-    if not group_code or len(group_code) > 64 or not isinstance(token, str) or len(token) > 128:
-        return
-    session = sessions.resolve_group(group_code)
-    if not session or not hmac.compare_digest(session["listenInToken"], token):
-        return
-    listen_in_subscribers[sid] = (group_code, session["sessionId"])
-    await sio.emit("pcmt_listen_in_data", build_listen_in_state(session), to=sid)
 
 
 # Legacy frontend_roster messages are deliberately ignored: only trusted
