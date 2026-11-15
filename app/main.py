@@ -10,8 +10,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .admin_auth import AdminAuth
-from .storage import DATA_DIR, AppConfig, OverrideStore, SessionStore, normalize_group_code, stream_id_for_riot_id
+from .storage import DATA_DIR, AppConfig, OverrideStore, SessionStore, normalize_group_code, normalize_riot_id, now_ms, stream_id_for_riot_id
 from .session_identity import SessionRiotIdStore
+from .spectra_roster import SpectraRosterWatcher
 from .vdo import build_preview_url, build_publish_url
 
 
@@ -28,8 +29,8 @@ sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 app = FastAPI(title="PCMT Playercams", version="0.2.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# Current Spectra rosters are transient. The frontend republishes them whenever
-# match data changes or its Socket.IO connection is re-established.
+# Trusted Spectra output rosters are transient. Unauthenticated browser-submitted
+# frontend_roster events are intentionally ignored.
 rosters: dict[str, dict[str, Any]] = {}
 frontend_groups: dict[str, str] = {}
 frontend_sessions: dict[str, str | None] = {}
@@ -79,15 +80,39 @@ def require_session_token(session_id: str, x_producer_token: str | None) -> dict
     return session
 
 
+ROSTER_TTL_MS = 120_000
+
+
+def get_trusted_roster(group_code: str) -> dict[str, Any] | None:
+    roster = rosters.get(normalize_group_code(group_code))
+    if roster and now_ms() - int(roster.get("updatedAt", 0)) <= ROSTER_TTL_MS:
+        return roster
+    return None
+
+
 def get_latest_roster(session: dict[str, Any]) -> dict[str, Any] | None:
-    candidates: list[dict[str, Any]] = []
-    for alias in sessions.list_aliases(session["sessionId"]):
-        roster = rosters.get(normalize_group_code(alias))
-        if roster:
-            candidates.append(roster)
-    if not candidates:
-        return None
-    return max(candidates, key=lambda item: int(item.get("updatedAt", 0)))
+    candidates = [
+        roster
+        for alias in sessions.list_aliases(session["sessionId"])
+        if (roster := get_trusted_roster(alias)) is not None
+    ]
+    return max(candidates, key=lambda item: item["updatedAt"]) if candidates else None
+
+
+def scoped_name_overrides(group_code: str, session: dict[str, Any] | None) -> list[list[str]]:
+    """Only disclose display names for the verified roster or joined players."""
+    roster = get_latest_roster(session) if session else get_trusted_roster(group_code)
+    visible_ids: set[str] = set()
+    if roster:
+        for team in roster["teams"]:
+            visible_ids.update(normalize_riot_id(player["riotId"]) for player in team["players"])
+    if session:
+        visible_ids.update(normalize_riot_id(player["riotId"]) for player in effective_players(session["sessionId"]))
+    return [
+        [riot_id, display_name]
+        for riot_id, display_name in overrides.as_pairs()
+        if normalize_riot_id(riot_id) in visible_ids
+    ]
 
 
 def get_override_display_name(riot_id: str) -> str | None:
@@ -157,8 +182,9 @@ def build_frontend_state(group_code: str, session_override: dict[str, Any] | Non
         "groupCode": normalized,
         "sessionId": session_id,
         "playercamsInfo": playercams_info,
-        # Preserve the same array-of-tuples shape Spectra serializes for Map.
-        "nameOverrides": overrides.as_pairs(),
+        # Preserve Spectra's array-of-tuples format without exposing the whole
+        # persistent override database to anonymous frontend subscribers.
+        "nameOverrides": scoped_name_overrides(normalized, session),
     }
 
 
@@ -188,6 +214,22 @@ async def emit_state_to_all_frontends() -> None:
             # A disconnect event will clean the normal path. This keeps one stale
             # SID from blocking an update to all other connected overlays.
             pass
+
+
+async def receive_trusted_roster(group_code: str, teams: list[dict[str, Any]]) -> None:
+    previous = get_trusted_roster(group_code)
+    rosters[group_code] = {"teams": teams, "updatedAt": now_ms()}
+    if previous is None or previous["teams"] != teams:
+        await emit_state_to_all_frontends()
+
+
+def roster_watch_needed(group_code: str) -> bool:
+    return group_code in frontend_groups.values() or sessions.resolve_group(group_code) is not None
+
+
+roster_watcher = SpectraRosterWatcher(
+    config.spectra_output_endpoint, receive_trusted_roster, roster_watch_needed
+)
 
 
 @app.get("/")
@@ -258,6 +300,7 @@ async def create_session(payload: SessionRequest, request: Request) -> JSONRespo
             detail="An active playercam session already exists for this group code. Open its private producer link instead.",
         )
 
+    roster_watcher.ensure_watch(session["groupCode"])
     await emit_state_to_all_frontends()
     return JSONResponse(
         {
@@ -275,6 +318,7 @@ async def producer_session(
     x_producer_token: str | None = Header(default=None),
 ) -> dict[str, Any]:
     session = require_session_token(session_id, x_producer_token)
+    roster_watcher.ensure_watch(session["groupCode"])
     return build_producer_state(session)
 
 
@@ -305,6 +349,7 @@ async def rebind_group_code(
         session = sessions.rebind_group(session_id, payload.groupCode)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    roster_watcher.ensure_watch(session["groupCode"])
     await emit_state_to_all_frontends()
     return build_producer_state(session)
 
@@ -474,28 +519,17 @@ async def frontend_logon(sid: str, data: Any) -> None:
     if not isinstance(data, dict):
         return
     group_code = normalize_group_code(str(data.get("groupCode", "")))
-    if not group_code:
+    if not group_code or len(group_code) > 64:
         return
     frontend_groups[sid] = group_code
     resolved = sessions.resolve_group(group_code)
     frontend_sessions[sid] = resolved["sessionId"] if resolved else None
+    roster_watcher.ensure_watch(group_code)
     await sio.emit("pcmt_tools_data", build_frontend_state(group_code, resolved), to=sid)
 
 
-@sio.on("frontend_roster")
-async def frontend_roster(sid: str, data: Any) -> None:
-    if not isinstance(data, dict):
-        return
-    group_code = frontend_groups.get(sid)
-    if not group_code:
-        return
-    teams = data.get("teams")
-    if not isinstance(teams, list):
-        return
-    rosters[group_code] = {
-        "teams": teams,
-        "updatedAt": int(data.get("updatedAt") or 0),
-    }
+# Legacy frontend_roster messages are deliberately ignored: only trusted
+# Spectra output can populate the producer's match roster.
 
 
 application = socketio.ASGIApp(sio, other_asgi_app=app)
