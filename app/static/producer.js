@@ -132,8 +132,8 @@ function micState(player) {
   if (!player) return { label: "Mic not joined", kind: "missing" };
   if (!player.audioEnabled) return { label: "Mic off", kind: "off" };
   return playerPageIsActive(player)
-    ? { label: "Mic enabled", kind: "enabled" }
-    : { label: "Mic enabled · offline", kind: "offline" };
+    ? { label: "Mic setup enabled", kind: "enabled" }
+    : { label: "Mic enabled · page offline", kind: "offline" };
 }
 
 function makeMicBadge() {
@@ -153,6 +153,35 @@ function paintMicBadge(badge, player) {
       : state.kind === "off"
         ? "Player has not enabled microphone sharing."
         : "No active Playercams registration for this player.";
+}
+
+function renderListenInPlayerStatuses(state) {
+  const root = $("listenInPlayerStatus");
+  root.replaceChildren();
+  const players = state.players || [];
+  if (!players.length) {
+    const placeholder = document.createElement("p");
+    placeholder.className = "meta";
+    placeholder.textContent = "No players have registered in this session yet.";
+    root.appendChild(placeholder);
+    return;
+  }
+  for (const player of players) {
+    const row = document.createElement("div");
+    row.className = "listen-in-player-row";
+    const name = document.createElement("strong");
+    name.textContent = player.riotId;
+    name.title = player.riotId;
+    const detail = document.createElement("span");
+    detail.className = "meta";
+    detail.textContent = playerPageIsActive(player)
+      ? "Player page active"
+      : formatSeen(player.lastSeen);
+    const mic = makeMicBadge();
+    paintMicBadge(mic, player);
+    row.append(name, detail, mic);
+    root.appendChild(row);
+  }
 }
 
 function previewKey(player) {
@@ -459,6 +488,7 @@ function render(state) {
   const otherAliases = (state.aliases || []).filter((value) => value.toLocaleUpperCase() !== state.groupCode.toLocaleUpperCase());
   $("aliases").textContent = otherAliases.length ? `Previous group code aliases: ${otherAliases.join(", ")}` : "";
   renderPreviews(state);
+  renderListenInPlayerStatuses(state);
   if (!isOverrideInputFocused()) {
     renderRoster(state);
     renderOverrides(state);
