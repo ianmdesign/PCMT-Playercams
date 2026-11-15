@@ -45,11 +45,18 @@
         <button id="toggleMic" class="btn ghost" type="button">Enable microphone</button>
         <button id="backButton" class="btn ghost">Back</button>
       </div>
-      <iframe id="vdoFrame" class="vdo-frame" allow="camera *; autoplay *; fullscreen *"></iframe>
-      <div id="micPanel" class="mic-publisher-panel" aria-live="polite">
-        <strong>Microphone uplink</strong>
-        <span id="micStatus">Microphone off. No audio sent to production.</span>
-        <iframe id="micFrame" title="One-way microphone uplink" allow="microphone *; autoplay *" referrerpolicy="no-referrer"></iframe>
+      <div class="publisher-grid">
+        <section class="visual-publisher-pane" aria-label="Playercam video or image setup">
+          <div class="publisher-pane-heading">Playercam video / image</div>
+          <iframe id="vdoFrame" class="vdo-frame" title="Playercam visual publisher" allow="camera *; autoplay *; fullscreen *"></iframe>
+        </section>
+        <section id="micPanel" class="mic-publisher-pane" aria-label="Microphone setup">
+          <div class="publisher-pane-heading">Microphone setup</div>
+          <p class="mic-description">Choose and test your microphone using VDO.Ninja below. This is a separate audio-only connection to production. You will not hear other players here.</p>
+          <div id="micOff" class="mic-off-placeholder">Your microphone is off. Use <strong>Enable microphone</strong> above to open microphone setup.</div>
+          <iframe id="micFrame" class="mic-setup-frame hidden" title="VDO.Ninja microphone selection and audio-only publisher" allow="microphone *; autoplay *" referrerpolicy="no-referrer"></iframe>
+          <div id="micStatus" class="mic-status" role="status" aria-live="polite">Microphone off. No audio sent to production.</div>
+        </section>
       </div>
     </div>
   </main>
