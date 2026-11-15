@@ -104,7 +104,8 @@ def build_audio_publish_url(room_id: str, riot_id: str, audio_stream_id: str) ->
     from urllib.parse import quote
 
     return "https://vdo.ninja/?" + "&".join([
-        f"room={quote(room_id, safe='')}",
+        # Deliberately no room= parameter: mic only supports direct view
+        # requests and cannot discover or receive room guests.
         f"push={quote(audio_stream_id, safe='')}",
         f"label={quote(riot_id + ' microphone', safe='')}",
         "miconly",
