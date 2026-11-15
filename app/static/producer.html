@@ -102,6 +102,8 @@
             <button id="listenInRight" type="button" class="btn">Right team</button>
           </div>
           <div class="meta">Currently selected: <strong id="listenInStatus">Off</strong></div>
+          <div class="meta">Player mic status means opted in to setup, not confirmed transmission.</div>
+          <div id="listenInPlayerStatus" class="listen-in-player-list" aria-live="polite"></div>
           <p class="meta">Dedicated OBS source only: paste the listener URL fragment below into your /listen-in browser source. Treat the fragment as a private read-only credential; never publish it in general overlay URLs.</p>
           <div id="listenInFragment" class="code"></div>
           <button id="copyListenInFragment" type="button" class="btn ghost">Copy private Listen-In fragment</button>
