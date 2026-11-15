@@ -60,7 +60,11 @@ The service listens on port `5400` by default.
 ```json
 {
   "publicBaseUrl": "http://localhost:5400",
-  "spectraOutputEndpoint": "https://na.valospectra.com:5200",
+  "spectraOutputEndpoints": [
+    "https://na.valospectra.com:5200",
+    "https://eu.valospectra.com:5200",
+    "http://spectra-server:5200"
+  ],
   "groupAliasGraceMinutes": 30,
   "roomPrefix": "pcmtplayercams",
   "roomRandomDigits": 12,
@@ -72,15 +76,25 @@ The service listens on port `5400` by default.
 
 `publicBaseUrl` defaults to `http://localhost:5400`. Like PCMT Mapban, change it directly in `config/config.json` when deploying behind a public hostname; for example, set it to the HTTPS URL used by players. Set `SPECTRA_ORGANIZATION_CODE` to your existing Spectra organization code in the playercams container (or the local `.env` when using Compose). Creating a session requires this code plus the Spectra group code. The browser remembers the login for 30 days with an HTTP-only cookie; the code itself is not saved in browser storage. The signing key persists in `/data`. If the environment variable is empty, creation stays disabled. Once created, producer access is granted exclusively by the per-session private Producer URL, even on another browser without the login cookie. The token lives after `#token=` so it is not sent as part of the HTTP request URL; the producer page reads it locally and supplies it in authenticated API requests. The producer token also authorizes name-override edits. Treat the complete Producer URL as a secret. `producerPreviewBitrateKbps` controls only the producer dashboard preview request and defaults to 500 kbps per active playercam; it does not cap the broadcast overlay feed. `publisherMaxBitrateKbps` is the per-viewer sender-side ceiling, while `publisherTotalBitrateKbps` caps aggregate outbound player video across the broadcast overlay, producer preview, and any other direct viewers. The defaults of 2500/3000 kbps line the publisher ceiling up with the normal 2500 kbps broadcast request and leave 500 kbps for the producer preview, reducing player upload and producer preview decode load without lowering the broadcast viewer target. The player-facing link has its own separate random join token and never exposes the Spectra group code as authentication.
 
-### Trusted Spectra roster source (required for automatic current-match names)
+### Trusted Spectra roster sources (required for automatic current-match names)
 
-Set `spectraOutputEndpoint` in the deployed `config/config.json` to the trusted Spectra **output** Socket.IO endpoint that your OBS frontend actually uses (for example `https://na.valospectra.com:5200`, `https://eu.valospectra.com:5200`, or an explicitly trusted internal Spectra endpoint). The checked-in default is intentionally blank; this is a deployment-specific setting. This service binds to **one** Spectra output server; do not use the same playercams instance for simultaneous group-code collisions across multiple Spectra servers.
+Set `spectraOutputEndpoints` in the deployed `config/config.json` to your trusted **output** Socket.IO endpoints:
 
-The Playercams backend subscribes to Spectra `match_data` and derives the current-match roster itself. Public HUD clients may still send legacy `frontend_roster` packets, but those are ignored; a browser cannot choose the Spectra endpoint or spoof producer roster data. Only current roster players (plus players registered in the active camera session) receive matching persistent name overrides over public Socket.IO, rather than all historical saved overrides. The full override list remains available to holders of the private producer token.
+```json
+"spectraOutputEndpoints": [
+  "https://na.valospectra.com:5200",
+  "https://eu.valospectra.com:5200",
+  "http://spectra-server:5200"
+]
+```
 
-**Upgrade requirement:** Set this endpoint **before updating the running image**. Without it, playercam video and producer-authenticated controls continue working, but the automatic Current Match roster is empty and persistent name overrides for players without a camera registration cannot be sent to the HUD (fail closed). If the endpoint is offline, the last verified roster expires from the producer view after 2 minutes; publishing resumes when Spectra reconnects.
+These are examples. Use the exact NA, EU, and local output URLs your HUD uses. The local hostname must resolve **inside the Playercams container**; join the appropriate Docker network or use a reachable server address. Use HTTPS for public connections. Only the server operator can configure these URLs, not browser clients. Entries must be HTTP(S) host:port URLs, without paths, credentials, queries or fragments. Eight configured endpoints are supported.
 
-You can leave the current PCMT frontend unchanged. Its legacy roster messages are ignored by the new backend; no additional HUD or organization-code credentials are needed.
+The legacy single `spectraOutputEndpoint` setting continues working when the new `spectraOutputEndpoints` list is absent. If both are present, the new list takes precedence, even when empty. Duplicate URLs are removed. Each requested Spectra group is watched independently on every configured endpoint; returned `match_data` must match that group. Data is stored by `(endpoint, groupCode)` and never merged across servers.
+
+**Group code collisions:** Existing playercam sessions and HUD subscriptions are keyed only by group code. If NA and EU (or local) simultaneously have active matches using the same code, the roster is considered ambiguous and **withheld**, rather than guessing which server was intended. Use different group codes for simultaneous matches. This update does not implement endpoint-specific sessions or let public browser messages choose a trusted data source.
+
+**Upgrade:** Populate the endpoint list before deploying the new image. If none is configured or reachable, live cameras and producer token operations still function, but automatic rosters are unavailable. Source rosters expire after two minutes without new Spectra data; each source reconnects independently. The existing HUD does not require an update. Unauthenticated legacy `frontend_roster` packets remain ignored, and public name-override output stays limited to confirmed players.
 
 Use an HTTPS public hostname with **Force SSL** in Nginx Proxy Manager. The organization code is submitted in the HTTPS request body, never in a URL; the page prevents submitting it over public HTTP. Localhost development may use HTTP. The producer page sends HSTS for future HTTPS visits.
 
@@ -138,7 +152,7 @@ The service replies and pushes updates as:
 
 If there is no PCMT playercam session for the group code, `playercamsInfo` is `null`. The frontend then falls back to stock Spectra `tools.playercamsInfo`. PCMT name overrides apply only to players confirmed by the trusted Spectra roster source or registered in the active playercam session.
 
-Existing frontends may emit `frontend_roster`; it is ignored. The producer's current roster is obtained server-side from the explicitly configured Spectra output connection.
+Existing frontends may emit `frontend_roster`; it is ignored. The producer's current roster is obtained from the configured Spectra output endpoints, with colliding group codes rejected.
 
 ## Tests
 
