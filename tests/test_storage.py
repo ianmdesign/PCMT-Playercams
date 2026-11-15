@@ -14,6 +14,7 @@ class SessionStoreTests(unittest.TestCase):
         root = Path(self.temp.name)
         self.config = AppConfig(
             public_base_url="http://localhost:5400",
+            spectra_output_endpoints=(("NA", "https://na.valospectra.com:5200"), ("EU", "https://eu.valospectra.com:5200")),
             group_alias_grace_minutes=30,
             room_prefix="pcmtplayercams",
             room_random_digits=12,
@@ -24,9 +25,23 @@ class SessionStoreTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_same_group_code_is_independent_between_servers(self):
+        na, _, _ = self.store.create_or_reuse("SHARED", "https://na.valospectra.com:5200")
+        eu, _, _ = self.store.create_or_reuse("SHARED", "https://eu.valospectra.com:5200")
+        self.assertNotEqual(na["sessionId"], eu["sessionId"])
+        self.assertEqual(na["sessionId"], self.store.resolve_group("SHARED", "https://na.valospectra.com:5200")["sessionId"])
+        self.assertEqual(eu["sessionId"], self.store.resolve_group("SHARED", "https://eu.valospectra.com:5200")["sessionId"])
+
+    def test_rebinding_does_not_collide_across_servers(self):
+        na, _, _ = self.store.create_or_reuse("OLD", "https://na.valospectra.com:5200")
+        eu, _, _ = self.store.create_or_reuse("NEW", "https://eu.valospectra.com:5200")
+        result = self.store.rebind_group(na["sessionId"], "NEW")
+        self.assertEqual(na["sessionId"], result["sessionId"])
+        self.assertEqual(eu["sessionId"], self.store.resolve_group("NEW", "https://eu.valospectra.com:5200")["sessionId"])
+
     def test_create_and_reuse_group(self):
-        first, created, producer_token = self.store.create_or_reuse("abc123")
-        second, created_again, reused_token = self.store.create_or_reuse("ABC123")
+        first, created, producer_token = self.store.create_or_reuse("abc123", "https://na.valospectra.com:5200")
+        second, created_again, reused_token = self.store.create_or_reuse("ABC123", "https://na.valospectra.com:5200")
         self.assertTrue(created)
         self.assertIsNotNone(producer_token)
         self.assertFalse(created_again)
@@ -39,22 +54,22 @@ class SessionStoreTests(unittest.TestCase):
         self.assertTrue(suffix.isdigit())
 
     def test_rebind_preserves_room_and_join_token(self):
-        first, _, _ = self.store.create_or_reuse("OLD123")
+        first, _, _ = self.store.create_or_reuse("OLD123", "https://na.valospectra.com:5200")
         rebound = self.store.rebind_group(first["sessionId"], "NEW456")
         self.assertEqual(first["roomId"], rebound["roomId"])
         self.assertEqual(first["joinToken"], rebound["joinToken"])
         self.assertEqual("NEW456", rebound["groupCode"])
-        self.assertEqual(first["sessionId"], self.store.resolve_group("OLD123")["sessionId"])
-        self.assertEqual(first["sessionId"], self.store.resolve_group("NEW456")["sessionId"])
+        self.assertEqual(first["sessionId"], self.store.resolve_group("OLD123", "https://na.valospectra.com:5200")["sessionId"])
+        self.assertEqual(first["sessionId"], self.store.resolve_group("NEW456", "https://na.valospectra.com:5200")["sessionId"])
 
     def test_rebind_rejects_other_active_session(self):
-        first, _, _ = self.store.create_or_reuse("GROUP1")
-        self.store.create_or_reuse("GROUP2")
+        first, _, _ = self.store.create_or_reuse("GROUP1", "https://na.valospectra.com:5200")
+        self.store.create_or_reuse("GROUP2", "https://na.valospectra.com:5200")
         with self.assertRaises(ValueError):
             self.store.rebind_group(first["sessionId"], "GROUP2")
 
     def test_producer_token_is_required_and_not_returned_in_session_state(self):
-        session, created, producer_token = self.store.create_or_reuse("SECURE1")
+        session, created, producer_token = self.store.create_or_reuse("SECURE1", "https://na.valospectra.com:5200")
         self.assertTrue(created)
         self.assertTrue(producer_token)
         self.assertNotIn("producerToken", session)
@@ -64,7 +79,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertFalse(self.store.verify_producer_token(session["sessionId"], None))
 
     def test_rotating_producer_token_invalidates_old_link_only(self):
-        session, _, old_token = self.store.create_or_reuse("ROTATE1")
+        session, _, old_token = self.store.create_or_reuse("ROTATE1", "https://na.valospectra.com:5200")
         room_id = session["roomId"]
         join_token = session["joinToken"]
         new_token = self.store.rotate_producer_token(session["sessionId"])
@@ -76,7 +91,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(join_token, refreshed["joinToken"])
 
     def test_producer_token_is_stored_as_hash(self):
-        session, _, producer_token = self.store.create_or_reuse("HASH1")
+        session, _, producer_token = self.store.create_or_reuse("HASH1", "https://na.valospectra.com:5200")
         with self.store._connect() as conn:
             row = conn.execute(
                 "SELECT producer_token_hash FROM sessions WHERE session_id = ?",
@@ -90,14 +105,14 @@ class SessionStoreTests(unittest.TestCase):
         created_at = 1_800_000_000_000
         forty_eight_hours_ms = 48 * 60 * 60 * 1000
         with patch("app.storage.now_ms", return_value=created_at):
-            session, _, producer_token = self.store.create_or_reuse("EXP48")
+            session, _, producer_token = self.store.create_or_reuse("EXP48", "https://na.valospectra.com:5200")
 
         self.assertEqual(created_at + forty_eight_hours_ms, session["expiresAt"])
 
         with patch("app.storage.now_ms", return_value=created_at + forty_eight_hours_ms - 1):
             self.assertIsNotNone(self.store.get_session(session["sessionId"]))
             self.assertIsNotNone(self.store.get_session_by_token(session["joinToken"]))
-            self.assertIsNotNone(self.store.resolve_group("EXP48"))
+            self.assertIsNotNone(self.store.resolve_group("EXP48", "https://na.valospectra.com:5200"))
             self.assertTrue(self.store.verify_producer_token(session["sessionId"], producer_token))
 
         with patch("app.storage.now_ms", return_value=created_at + forty_eight_hours_ms):
@@ -109,7 +124,7 @@ class SessionStoreTests(unittest.TestCase):
     def test_rebind_does_not_extend_48_hour_expiry(self):
         created_at = 1_800_000_000_000
         with patch("app.storage.now_ms", return_value=created_at):
-            session, _, _ = self.store.create_or_reuse("EXPOLD")
+            session, _, _ = self.store.create_or_reuse("EXPOLD", "https://na.valospectra.com:5200")
         original_expiry = session["expiresAt"]
 
         with patch("app.storage.now_ms", return_value=created_at + 24 * 60 * 60 * 1000):
@@ -118,7 +133,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(original_expiry, rebound["expiresAt"])
 
     def test_player_registration_is_case_insensitive_upsert(self):
-        session, _, _ = self.store.create_or_reuse("GROUP1")
+        session, _, _ = self.store.create_or_reuse("GROUP1", "https://na.valospectra.com:5200")
         self.store.register_player(session["joinToken"], "Player Name#NA1", "video")
         self.store.register_player(session["joinToken"], "player name#na1", "media")
         players = self.store.list_players(session["sessionId"])
