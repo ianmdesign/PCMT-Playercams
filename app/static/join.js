@@ -104,10 +104,15 @@ function setMicView(enabled, audioUrl = "") {
   // Clearing the iframe ends local capture immediately. The publisher is
   // always deafened and has no incoming room media, even if a player unmutes.
   micEnabled = enabled;
-  $("micFrame").src = enabled && audioUrl ? audioUrl : "about:blank";
+  const frame = $("micFrame");
+  const target = enabled && audioUrl ? audioUrl : "about:blank";
+  // Do not reload VDO.Ninja if the parent page refreshes its status.
+  if (frame.getAttribute("src") !== target) frame.src = target;
+  frame.classList.toggle("hidden", !enabled);
+  $("micOff").classList.toggle("hidden", enabled);
   $("toggleMic").textContent = enabled ? "Stop sharing microphone" : "Enable microphone";
   $("micStatus").textContent = enabled
-    ? "Microphone requested. Browser permission may be required; you cannot hear other players."
+    ? "Microphone setup open. Select your device, allow microphone access and start sharing inside VDO.Ninja. PCMT does not receive player audio."
     : "Microphone off. No audio sent to production.";
 }
 
@@ -128,8 +133,8 @@ async function toggleMicrophone() {
     if (!response.ok) throw new Error(data?.detail || "Could not change microphone setting.");
     setMicView(Boolean(data.audioEnabled), data.audioUrl || "");
   } catch (error) {
-    $("micStatus").textContent = error.message;
     if (!nextEnabled) setMicView(false);
+    $("micStatus").textContent = "Microphone change failed: " + error.message;
   } finally {
     micSwitching = false;
     $("toggleMic").disabled = false;

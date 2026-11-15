@@ -64,6 +64,10 @@ class VdoUrlTests(unittest.TestCase):
         self.assertIn("roombitrate=0", url)
         self.assertNotIn("&noaudio", url)
         self.assertNotIn("audiodevice=0", url)
+        self.assertNotIn("cleanoutput", url)
+        self.assertNotIn("nosettings", url)
+        self.assertNotIn("nomicbutton", url)
+        self.assertNotIn("room=", url)
 
 
 if __name__ == "__main__":

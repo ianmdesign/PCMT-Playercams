@@ -12,7 +12,9 @@ The upstream Spectra Server stays unchanged. The PCMT frontend continues to rece
 - The producer dashboard can rotate its Producer URL at any time; rotating immediately invalidates the previous producer token without changing the VDO room, player join link, registrations, or Spectra binding.
 - One separate random player join token is generated for the session.
 - VDO room IDs use `pcmtplayercams` followed immediately by 12 randomized digits by default.
-- Player camera calls are video-only: the embed does not grant microphone permission, VDO.Ninja is given `audiodevice=0`, and incoming room audio is disabled.
+- Playercam visual calls remain video-only (`audiodevice=0`); an **independent, optional, direct audio-only VDO.Ninja feed** lets participants share a mic with production. The mic feed uses `deafen` and does not join the shared visual room.
+- On the player join page the video/image publisher and an interactive microphone setup iframe appear in separate panels. Players can choose their microphone and start sharing through VDO.Ninja's native interface; the PCMT toggle stops their microphone separately, without stopping the visual feed.
+- Microphone access is explicitly opt-in, and no participant-to-participant audio playback or room receiver is provided by PCMT.
 - Player VDO.Ninja sessions are locked down: incoming room video is disabled, other players are not shown, the participant list/chat/header/settings/control buttons are hidden, and room-to-room video is disabled.
 - Publisher bandwidth is capped independently from preview quality. By default, a player can send at most 2500 kbps to any one direct viewer and 3000 kbps total across all outbound video connections.
 - The producer dashboard shows low-bandwidth, no-audio previews for active playercam pages without changing the full-quality feed requested by the broadcast overlay.
