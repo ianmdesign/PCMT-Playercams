@@ -8,7 +8,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt \
+    && python -c "import aiohttp, engineio.async_drivers.aiohttp; print('Async Socket.IO transport ready')"
 COPY app /app/app
 COPY config /app/config
 RUN mkdir -p /data
