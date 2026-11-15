@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.session_identity import SessionRiotIdStore
 from app.storage import AppConfig, SessionStore, stream_id_for_riot_id, audio_stream_id_for_player
@@ -72,7 +73,7 @@ class SessionRiotIdStoreTests(unittest.TestCase):
         from app import main
         from app.vdo import build_audio_publish_url, build_publish_url
 
-        session, _, _ = self.sessions.create_or_reuse("GROUP1")
+        session, _, producer_token = self.sessions.create_or_reuse("GROUP1")
         self.sessions.register_player(
             session["joinToken"], "Typo Name#NA1", "video", audio_enabled=True
         )
@@ -98,14 +99,21 @@ class SessionRiotIdStoreTests(unittest.TestCase):
             patch.object(main, "session_riot_ids", self.identities),
             patch.object(main, "get_latest_roster", return_value=roster),
             patch.object(main, "scoped_name_overrides", return_value=[]),
+            patch.object(main, "emit_state_to_all_frontends", new_callable=AsyncMock) as broadcast,
         ):
             before = main.build_frontend_state("GROUP1")["playercamsInfo"]
             self.assertEqual({}, before["audioStreamMappings"])
             self.assertEqual(original_camera, before["streamMappings"]["Typo Name#NA1"])
 
-            self.identities.set_correction(
-                session["sessionId"], "Typo Name#NA1", "Correct Name#NA1"
-            )
+            result = asyncio.run(main.correct_player_riot_id(
+                session["sessionId"],
+                main.CorrectPlayerRiotIdRequest(
+                    connectionRiotId="Typo Name#NA1", riotId="Correct Name#NA1"
+                ),
+                x_producer_token=producer_token,
+            ))
+            self.assertEqual("Correct Name#NA1", result["player"]["riotId"])
+            broadcast.assert_awaited_once()
             after = main.build_frontend_state("GROUP1")["playercamsInfo"]
             self.assertEqual(
                 original_camera, after["streamMappings"]["Correct Name#NA1"]
