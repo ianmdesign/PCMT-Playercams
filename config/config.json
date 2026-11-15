@@ -6,5 +6,10 @@
   "producerPreviewBitrateKbps": 500,
   "publisherMaxBitrateKbps": 2500,
   "publisherTotalBitrateKbps": 3000,
-  "spectraOutputEndpoint": ""
+  "spectraOutputEndpoint": "",
+  "spectraOutputEndpoints": {
+    "NA": "https://na.valospectra.com:5200",
+    "EU": "https://eu.valospectra.com:5200",
+    "Local": "http://localhost:5200"
+  }
 }
