@@ -10,6 +10,39 @@ let groupCodeDraftDirty = false;
 const overrideDrafts = new Map();
 let creationCsrfToken = "";
 let creationLoginPromise = Promise.resolve();
+let spectraServers = [];
+
+async function loadSpectraServers() {
+  const response = await api("/api/spectra-servers");
+  spectraServers = response.servers || [];
+  const selector = $("spectraServer");
+  selector.replaceChildren();
+  for (const server of spectraServers) {
+    const option = document.createElement("option");
+    option.value = server.endpoint;
+    option.textContent = `${server.name} (${server.endpoint})`;
+    selector.appendChild(option);
+  }
+  if (!spectraServers.length) $("startError").textContent = "Configure trusted Spectra servers in Playercams config.json.";
+}
+
+function selectSessionServer(state) {
+  const endpoint = state.spectraEndpoint || "";
+  const label = spectraServers.find((entry) => entry.endpoint === endpoint);
+  $("currentSpectraServer").textContent = label ? `${label.name} (${endpoint})` : (endpoint || "Unassigned legacy session");
+  $("assignSpectraServer").classList.toggle("hidden", !!endpoint);
+  $("legacySpectraServer").classList.toggle("hidden", !!endpoint);
+  if (!endpoint) {
+    const selector = $("legacySpectraServer");
+    selector.replaceChildren();
+    for (const server of spectraServers) {
+      const option = document.createElement("option");
+      option.value = server.endpoint;
+      option.textContent = `${server.name} (${server.endpoint})`;
+      selector.appendChild(option);
+    }
+  }
+}
 
 
 function getSessionIdFromPath() {
@@ -402,6 +435,7 @@ function render(state) {
   session = state;
   setProducerPath(state.sessionId);
   $("sessionId").textContent = state.sessionId;
+  selectSessionServer(state);
   $("roomId").textContent = state.roomId;
   $("producerUrl").textContent = buildProducerUrl(state);
   const currentGroupInput = $("currentGroup");
@@ -427,6 +461,7 @@ async function loadSessionById(sessionId, { silent = false } = {}) {
     return false;
   }
   try {
+    await loadSpectraServers();
     const state = await api(`/api/producer/session/${encodeURIComponent(sessionId)}`);
     showDashboard();
     render(state);
@@ -446,6 +481,7 @@ async function openSession() {
     return;
   }
   await creationLoginPromise;
+  await loadSpectraServers();
 
   const groupCode = $("groupCode").value.trim();
   if (!groupCode) {
@@ -470,7 +506,7 @@ async function openSession() {
     }
     const result = await api("/api/producer/session", {
       method: "POST",
-      body: JSON.stringify({ groupCode }),
+      body: JSON.stringify({ groupCode, spectraEndpoint: $("spectraServer").value }),
     });
     producerToken = result.producerToken || "";
     if (!producerToken) throw new Error("Server did not return a producer token for the new session.");
@@ -522,6 +558,19 @@ $("signOut").addEventListener("click", async () => {
     location.reload();
   } catch (error) { $("startError").textContent = error.message; }
 });
+$("assignSpectraServer").addEventListener("click", async () => {
+  if (!session || session.spectraEndpoint) return;
+  const endpoint = $("legacySpectraServer").value;
+  if (!endpoint) return showDashboardError("Select a configured Spectra server.");
+  try {
+    const result = await api(`/api/producer/session/${encodeURIComponent(session.sessionId)}/spectra-server`, {
+      method: "POST", body: JSON.stringify({ spectraEndpoint: endpoint }),
+    });
+    render(result);
+    showDashboardError("");
+  } catch (error) { showDashboardError(error.message); }
+});
+
 $("currentGroup").addEventListener("input", () => {
   groupCodeDraftDirty = true;
 });
@@ -624,5 +673,5 @@ if (requestedSessionId) {
   configureResumeCard(requestedSessionId);
   loadSessionById(requestedSessionId, { silent: true });
 } else {
-  creationLoginPromise = loadCreationLogin();
+  creationLoginPromise = Promise.all([loadCreationLogin(), loadSpectraServers()]);
 }
