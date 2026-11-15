@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", Path(__file__).resolve().parent.parent / "config"))
@@ -32,6 +33,29 @@ def hash_token(value: str) -> str:
 
 def normalize_group_code(value: str) -> str:
     return (value or "").strip().upper()
+
+
+def normalize_spectra_endpoint(value: str) -> str:
+    """Normalize an explicitly configured Spectra output origin."""
+    raw = str(value or "").strip().rstrip("/")
+    parts = urlsplit(raw)
+    if (
+        parts.scheme.lower() not in {"http", "https"}
+        or not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or parts.path
+        or parts.query
+        or parts.fragment
+    ):
+        raise ValueError("Spectra endpoint must be a plain http(s) origin")
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError("Invalid Spectra endpoint port") from exc
+    host = parts.hostname.lower()
+    host = f"[{host}]" if ":" in host else host
+    return f"{parts.scheme.lower()}://{host}" + (f":{port}" if port is not None else "")
 
 
 def normalize_riot_id(value: str) -> str:
@@ -58,6 +82,7 @@ def stream_id_for_riot_id(riot_id: str) -> str:
 class AppConfig:
     public_base_url: str = "http://localhost:5400"
     spectra_output_endpoint: str = ""
+    spectra_output_endpoints: tuple[tuple[str, str], ...] = ()
     group_alias_grace_minutes: int = 30
     room_prefix: str = "pcmtplayercams"
     room_random_digits: int = 12
@@ -71,9 +96,26 @@ class AppConfig:
         if not CONFIG_PATH.exists():
             return cls()
         raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        raw_endpoints = raw.get("spectraOutputEndpoints", {})
+        if not isinstance(raw_endpoints, dict):
+            raise ValueError("spectraOutputEndpoints must be a server label-to-URL object")
+        endpoints: list[tuple[str, str]] = []
+        for label, url in raw_endpoints.items():
+            name = str(label).strip()
+            if not name or len(name) > 40 or any(existing[0].casefold() == name.casefold() for existing in endpoints):
+                raise ValueError("Spectra server labels must be unique and 1-40 characters")
+            endpoints.append((name, normalize_spectra_endpoint(url)))
+        legacy = str(raw.get("spectraOutputEndpoint", "")).strip()
+        if legacy:
+            legacy = normalize_spectra_endpoint(legacy)
+            if legacy not in {url for _, url in endpoints}:
+                endpoints.append(("Legacy", legacy))
+        if len({url for _, url in endpoints}) != len(endpoints) or len(endpoints) > 10:
+            raise ValueError("Configure up to ten unique Spectra server endpoints")
         return cls(
             public_base_url=str(raw.get("publicBaseUrl", cls.public_base_url)).rstrip("/"),
-            spectra_output_endpoint=str(raw.get("spectraOutputEndpoint", cls.spectra_output_endpoint)).strip().rstrip("/"),
+            spectra_output_endpoint=legacy,
+            spectra_output_endpoints=tuple(endpoints),
             group_alias_grace_minutes=max(
                 0, int(raw.get("groupAliasGraceMinutes", cls.group_alias_grace_minutes))
             ),
@@ -83,6 +125,18 @@ class AppConfig:
             publisher_max_bitrate_kbps=max(100, int(raw.get("publisherMaxBitrateKbps", cls.publisher_max_bitrate_kbps))),
             publisher_total_bitrate_kbps=max(100, int(raw.get("publisherTotalBitrateKbps", cls.publisher_total_bitrate_kbps))),
         )
+
+    @property
+    def spectra_servers(self) -> dict[str, str]:
+        if self.spectra_output_endpoints:
+            return dict(self.spectra_output_endpoints)
+        return {"Default": self.spectra_output_endpoint} if self.spectra_output_endpoint else {}
+
+    def endpoint_for_server(self, server: str) -> str:
+        for label, endpoint in self.spectra_servers.items():
+            if label.casefold() == (server or "").strip().casefold():
+                return endpoint
+        raise ValueError("Select a configured Spectra server")
 
 
 class OverrideStore:
