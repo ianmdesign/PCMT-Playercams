@@ -233,6 +233,7 @@ class SessionStore:
                     join_token TEXT NOT NULL UNIQUE,
                     producer_token_hash TEXT,
                     current_group_code TEXT NOT NULL,
+                    spectra_endpoint TEXT NOT NULL DEFAULT '',
                     created_at INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL,
                     active INTEGER NOT NULL DEFAULT 1,
@@ -240,10 +241,12 @@ class SessionStore:
                 );
 
                 CREATE TABLE IF NOT EXISTS group_aliases (
-                    group_code TEXT PRIMARY KEY COLLATE NOCASE,
+                    group_code TEXT NOT NULL COLLATE NOCASE,
+                    spectra_endpoint TEXT NOT NULL DEFAULT '',
                     session_id TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
                     resolve_until INTEGER,
+                    PRIMARY KEY (spectra_endpoint, group_code),
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
                 );
 
@@ -262,6 +265,36 @@ class SessionStore:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
             if "producer_token_hash" not in columns:
                 conn.execute("ALTER TABLE sessions ADD COLUMN producer_token_hash TEXT")
+            if "spectra_endpoint" not in columns:
+                conn.execute("ALTER TABLE sessions ADD COLUMN spectra_endpoint TEXT NOT NULL DEFAULT ''")
+                # Single-server installations can migrate without changing sessions.
+                # Otherwise keep legacy sessions unbound until a producer selects.
+                known_endpoint = self.config.spectra_output_endpoint
+                if not known_endpoint and len(self.config.spectra_servers) == 1:
+                    known_endpoint = next(iter(self.config.spectra_servers.values()))
+                if known_endpoint:
+                    conn.execute(
+                        "UPDATE sessions SET spectra_endpoint = ? WHERE spectra_endpoint = ''",
+                        (known_endpoint,),
+                    )
+            alias_cols = {r["name"] for r in conn.execute("PRAGMA table_info(group_aliases)")}
+            if "spectra_endpoint" not in alias_cols:
+                conn.execute("ALTER TABLE group_aliases RENAME TO group_aliases_old")
+                conn.executescript("""
+                    CREATE TABLE group_aliases (
+                        group_code TEXT NOT NULL COLLATE NOCASE,
+                        spectra_endpoint TEXT NOT NULL DEFAULT '',
+                        session_id TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        resolve_until INTEGER,
+                        PRIMARY KEY (spectra_endpoint, group_code),
+                        FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+                    );
+                    INSERT INTO group_aliases (group_code, spectra_endpoint, session_id, created_at, resolve_until)
+                    SELECT a.group_code, s.spectra_endpoint, a.session_id, a.created_at, a.resolve_until
+                    FROM group_aliases_old a JOIN sessions s ON a.session_id = s.session_id;
+                    DROP TABLE group_aliases_old;
+                """)
             # Sessions created by pre-capability-link development builds have no
             # recoverable producer secret. Retire them rather than leave an
             # unauthenticated or permanently stuck producer session active.
@@ -289,6 +322,7 @@ class SessionStore:
             "roomId": row["room_id"],
             "joinToken": row["join_token"],
             "groupCode": row["current_group_code"],
+            "spectraEndpoint": row["spectra_endpoint"],
             "createdAt": row["created_at"],
             "expiresAt": row["expires_at"],
             "active": bool(row["active"]),
@@ -317,9 +351,9 @@ class SessionStore:
             return None
         return self._row_to_session(row)
 
-    def resolve_group(self, group_code: str) -> dict[str, Any] | None:
+    def resolve_group(self, group_code: str, spectra_endpoint: str = "") -> dict[str, Any] | None:
         group_code = normalize_group_code(group_code)
-        if not group_code:
+        if not group_code or not spectra_endpoint:
             return None
         at = now_ms()
         with self._connect() as conn:
@@ -328,9 +362,9 @@ class SessionStore:
                 SELECT s.*, a.resolve_until
                 FROM group_aliases a
                 JOIN sessions s ON s.session_id = a.session_id
-                WHERE a.group_code = ? COLLATE NOCASE
+                WHERE a.group_code = ? COLLATE NOCASE AND a.spectra_endpoint = ?
                 """,
-                (group_code,),
+                (group_code, spectra_endpoint),
             ).fetchone()
         if not self._is_live(row, at):
             return None
@@ -341,11 +375,18 @@ class SessionStore:
             return self._row_to_session(row)
         return None
 
-    def create_or_reuse(self, group_code: str) -> tuple[dict[str, Any], bool, str | None]:
+    def create_or_reuse(self, group_code: str, spectra_endpoint: str = "") -> tuple[dict[str, Any], bool, str | None]:
         group_code = normalize_group_code(group_code)
         if not group_code:
             raise ValueError("Group code is required")
-        existing = self.resolve_group(group_code)
+        if not spectra_endpoint:
+            if len(self.config.spectra_servers) == 1:
+                spectra_endpoint = next(iter(self.config.spectra_servers.values()))
+            else:
+                raise ValueError("Select the Spectra server for this playercam session")
+        if spectra_endpoint not in self.config.spectra_servers.values():
+            raise ValueError("Spectra endpoint is not configured")
+        existing = self.resolve_group(group_code, spectra_endpoint)
         if existing:
             return existing, False, None
 
@@ -365,28 +406,28 @@ class SessionStore:
                 """
                 SELECT s.*, a.resolve_until FROM group_aliases a
                 JOIN sessions s ON s.session_id = a.session_id
-                WHERE a.group_code = ? COLLATE NOCASE
+                WHERE a.group_code = ? COLLATE NOCASE AND a.spectra_endpoint = ?
                 """,
-                (group_code,),
+                (group_code, spectra_endpoint),
             ).fetchone()
             if stale and self._is_live(stale):
                 alias_is_current = stale["current_group_code"].casefold() == group_code.casefold()
                 alias_is_live = stale["resolve_until"] is None or int(stale["resolve_until"]) > created
                 if alias_is_current or alias_is_live:
                     raise ValueError(f"Group code {group_code} is already associated with an active session")
-            conn.execute("DELETE FROM group_aliases WHERE group_code = ? COLLATE NOCASE", (group_code,))
+            conn.execute("DELETE FROM group_aliases WHERE group_code = ? COLLATE NOCASE AND spectra_endpoint = ?", (group_code, spectra_endpoint))
             conn.execute(
                 """
                 INSERT INTO sessions (
                     session_id, room_id, join_token, producer_token_hash, current_group_code,
-                    created_at, expires_at, active, playercams_enabled
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)
+                    spectra_endpoint, created_at, expires_at, active, playercams_enabled
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
                 """,
-                (session_id, room_id, join_token, producer_token_hash, group_code, created, expires),
+                (session_id, room_id, join_token, producer_token_hash, group_code, spectra_endpoint, created, expires),
             )
             conn.execute(
-                "INSERT INTO group_aliases (group_code, session_id, created_at, resolve_until) VALUES (?, ?, ?, NULL)",
-                (group_code, session_id, created),
+                "INSERT INTO group_aliases (group_code, spectra_endpoint, session_id, created_at, resolve_until) VALUES (?, ?, ?, ?, NULL)",
+                (group_code, spectra_endpoint, session_id, created),
             )
 
         return self.get_session(session_id) or {}, True, producer_token
@@ -435,9 +476,9 @@ class SessionStore:
                 """
                 SELECT s.*, a.resolve_until FROM group_aliases a
                 JOIN sessions s ON s.session_id = a.session_id
-                WHERE a.group_code = ? COLLATE NOCASE AND s.session_id != ?
+                WHERE a.group_code = ? COLLATE NOCASE AND a.spectra_endpoint = ? AND s.session_id != ?
                 """,
-                (new_group_code, session_id),
+                (new_group_code, session["spectraEndpoint"], session_id),
             ).fetchone()
             if conflict and self._is_live(conflict, at):
                 alias_is_current = conflict["current_group_code"].casefold() == new_group_code.casefold()
@@ -446,17 +487,52 @@ class SessionStore:
                     raise ValueError(f"Group code {new_group_code} is already associated with another active session")
 
             conn.execute(
-                "UPDATE group_aliases SET resolve_until = ? WHERE session_id = ? AND group_code = ? COLLATE NOCASE",
-                (grace_until, session_id, session["groupCode"]),
+                "UPDATE group_aliases SET resolve_until = ? WHERE session_id = ? AND group_code = ? COLLATE NOCASE AND spectra_endpoint = ?",
+                (grace_until, session_id, session["groupCode"], session["spectraEndpoint"]),
             )
-            conn.execute("DELETE FROM group_aliases WHERE group_code = ? COLLATE NOCASE", (new_group_code,))
+            conn.execute("DELETE FROM group_aliases WHERE group_code = ? COLLATE NOCASE AND spectra_endpoint = ?", (new_group_code, session["spectraEndpoint"]))
             conn.execute(
-                "INSERT INTO group_aliases (group_code, session_id, created_at, resolve_until) VALUES (?, ?, ?, NULL)",
-                (new_group_code, session_id, at),
+                "INSERT INTO group_aliases (group_code, spectra_endpoint, session_id, created_at, resolve_until) VALUES (?, ?, ?, ?, NULL)",
+                (new_group_code, session["spectraEndpoint"], session_id, at),
             )
             conn.execute(
                 "UPDATE sessions SET current_group_code = ? WHERE session_id = ?",
                 (new_group_code, session_id),
+            )
+        return self.get_session(session_id) or {}
+
+    def assign_legacy_endpoint(self, session_id: str, spectra_endpoint: str) -> dict[str, Any]:
+        """Explicitly bind an ambiguous legacy session without rotating its links."""
+        if spectra_endpoint not in self.config.spectra_servers.values():
+            raise ValueError("Spectra endpoint is not configured")
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Playercam session is not active")
+        if session["spectraEndpoint"]:
+            if session["spectraEndpoint"] == spectra_endpoint:
+                return session
+            raise ValueError("This session is already bound to a Spectra server")
+        # Assignment is performed atomically, with uniqueness enforced by the DB.
+        with self._connect() as conn:
+            for (alias,) in conn.execute(
+                "SELECT group_code FROM group_aliases WHERE session_id = ?", (session_id,)
+            ):
+                other = conn.execute(
+                    """SELECT s.session_id FROM group_aliases a
+                       JOIN sessions s ON s.session_id = a.session_id
+                       WHERE a.spectra_endpoint = ? AND a.group_code = ? COLLATE NOCASE
+                         AND s.active = 1 AND s.expires_at > ? AND s.session_id != ?""",
+                    (spectra_endpoint, alias, now_ms(), session_id),
+                ).fetchone()
+                if other:
+                    raise ValueError("Group code is already in use on that Spectra server")
+            conn.execute(
+                "UPDATE group_aliases SET spectra_endpoint = ? WHERE session_id = ?",
+                (spectra_endpoint, session_id),
+            )
+            conn.execute(
+                "UPDATE sessions SET spectra_endpoint = ? WHERE session_id = ?",
+                (spectra_endpoint, session_id),
             )
         return self.get_session(session_id) or {}
 
